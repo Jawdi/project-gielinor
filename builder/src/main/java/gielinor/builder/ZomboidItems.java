@@ -13,27 +13,67 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * Reads the vanilla items out of Project Zomboid's scripts
- * (`media/scripts/**.txt`), keeping each `item Name { Key = Value, ... }`
- * block's properties in order. Only what the builder needs: nested blocks
- * inside an item are skipped.
+ * Reads Project Zomboid's scripts (`media/scripts/**.txt`): nested blocks like
+ * `module Base { item Axe { Weight = 3.0, ... } model Axe { mesh = ...,
+ * attachment world { ... } } }`. The builder copies vanilla items and their
+ * models as templates.
  */
 final class ZomboidItems {
+    /** A block: its header (`item Axe`), properties in order, and child blocks. */
+    record Block(String header, Map<String, String> properties, List<Block> children) {
+        String kind() {
+            int space = header.indexOf(' ');
+            return space < 0 ? header : header.substring(0, space);
+        }
+
+        String name() {
+            int space = header.indexOf(' ');
+            return space < 0 ? "" : header.substring(space + 1).trim();
+        }
+
+        /** The block written back out as script text, indented by `indent` spaces. */
+        String text(int indent) {
+            String pad = " ".repeat(indent);
+            StringBuilder out = new StringBuilder(pad + header + "\n" + pad + "{\n");
+            properties.forEach((k, v) -> out.append(pad).append("    ").append(k).append(" = ").append(v).append(",\n"));
+            for (Block child : children) {
+                out.append(child.text(indent + 4));
+            }
+            return out.append(pad).append("}\n").toString();
+        }
+    }
+
+    /** Vanilla items and models in the `Base` module, by name. */
+    record Scripts(Map<String, Block> items, Map<String, Block> models) {
+    }
+
     private ZomboidItems() {
     }
 
-    /** Every item in the `Base` module, by type name. */
-    static Map<String, Map<String, String>> load(File install) throws IOException {
-        Map<String, Map<String, String>> items = new HashMap<>();
+    static Scripts load(File install) throws IOException {
+        Map<String, Block> items = new HashMap<>();
+        Map<String, Block> models = new HashMap<>();
         List<Path> files;
         try (Stream<Path> walk = Files.walk(install.toPath().resolve("media/scripts"))) {
             files = walk.filter(p -> p.toString().endsWith(".txt")).sorted().toList();
         }
         for (Path file : files) {
             String text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
-            parseModule(stripComments(text), items);
+            for (Block module : parse(stripComments(text))) {
+                if (!module.kind().equals("module") || !module.name().equals("Base")) {
+                    continue;
+                }
+                for (Block b : module.children()) {
+                    switch (b.kind()) {
+                        case "item" -> items.put(b.name(), b);
+                        case "model" -> models.put(b.name(), b);
+                        default -> {
+                        }
+                    }
+                }
+            }
         }
-        return items;
+        return new Scripts(items, models);
     }
 
     static String stripComments(String text) {
@@ -53,50 +93,64 @@ final class ZomboidItems {
         return out.toString();
     }
 
-    /** Finds `module Base { ... item X { ... } ... }` and collects its items. */
-    static void parseModule(String text, Map<String, Map<String, String>> into) {
+    /** The top-level blocks of a script file. */
+    static List<Block> parse(String text) {
         List<String> tokens = tokens(text);
-        String module = null;
-        int depth = 0;
-        int moduleDepth = -1;
-        for (int i = 0; i < tokens.size(); i++) {
+        List<Block> top = new ArrayList<>();
+        parseInto(tokens, 0, top);
+        return top;
+    }
+
+    /** Parses blocks from `start` into `out` until a closing brace; returns the index after it. */
+    private static int parseInto(List<String> tokens, int start, List<Block> out) {
+        int i = start;
+        while (i < tokens.size()) {
             String t = tokens.get(i);
-            if (t.equals("{")) {
-                depth++;
-            } else if (t.equals("}")) {
-                depth--;
-                if (depth <= moduleDepth) {
-                    module = null;
-                    moduleDepth = -1;
-                }
-            } else if (depth == 0 && t.startsWith("module ")) {
-                module = t.substring(7).trim();
-                moduleDepth = depth;
-            } else if (module != null && module.equals("Base") && depth == moduleDepth + 1 && t.startsWith("item ")
-                    && i + 1 < tokens.size() && tokens.get(i + 1).equals("{")) {
-                String name = t.substring(5).trim();
+            if (t.equals("}")) {
+                return i + 1;
+            }
+            if (i + 1 < tokens.size() && tokens.get(i + 1).equals("{") && !t.contains("=")) {
                 Map<String, String> props = new LinkedHashMap<>();
-                int inner = 0;
-                int j = i + 1;
-                for (; j < tokens.size(); j++) {
+                List<Block> children = new ArrayList<>();
+                int j = i + 2;
+                while (j < tokens.size() && !tokens.get(j).equals("}")) {
                     String u = tokens.get(j);
-                    if (u.equals("{")) {
-                        inner++;
-                    } else if (u.equals("}")) {
-                        if (--inner == 0) {
-                            break;
-                        }
-                    } else if (inner == 1) {
+                    if (j + 1 < tokens.size() && tokens.get(j + 1).equals("{") && !u.contains("=")) {
+                        List<Block> one = new ArrayList<>();
+                        j = parseOne(tokens, j, one);
+                        children.addAll(one);
+                    } else {
                         int eq = u.indexOf('=');
                         if (eq > 0) {
                             props.put(u.substring(0, eq).trim(), u.substring(eq + 1).trim());
                         }
+                        j++;
                     }
                 }
-                into.put(name, props);
-                i = j;
+                out.add(new Block(t, props, children));
+                i = j + 1;
+            } else {
+                i++;
             }
         }
+        return i;
+    }
+
+    private static int parseOne(List<String> tokens, int start, List<Block> out) {
+        List<String> slice = new ArrayList<>();
+        int depth = 0;
+        int i = start;
+        for (; i < tokens.size(); i++) {
+            String t = tokens.get(i);
+            slice.add(t);
+            if (t.equals("{")) {
+                depth++;
+            } else if (t.equals("}") && --depth == 0) {
+                break;
+            }
+        }
+        parseInto(slice, 0, out);
+        return i + 1;
     }
 
     /** Braces as tokens of their own; everything else split at commas and line ends. */

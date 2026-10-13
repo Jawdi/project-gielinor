@@ -83,7 +83,17 @@ final class ItemConverter {
     /** Properties never copied from a template: its own looks, name and crafting ties. */
     private static final Set<String> NOT_COPIED = Set.of(
         "icon", "iconsfortexture", "weight", "displayname", "onbreak", "researchablerecipes",
-        "evolvedrecipe", "foodtype", "daysfresh", "daystotallyrotten", "tooltip");
+        "evolvedrecipe", "foodtype", "daysfresh", "daystotallyrotten", "tooltip", "weaponspritesbyindex");
+
+    /** The vanilla model a template weapon is drawn with. */
+    static String templateModel(ZomboidItems.Block template) {
+        String one = template.properties().get("WeaponSprite");
+        if (one != null) {
+            return one;
+        }
+        String many = template.properties().get("WeaponSpritesByIndex");
+        return many == null ? null : many.split(";")[0].trim();
+    }
 
     /** An item's type name: the words run together, each capitalised, letters and digits only. */
     static String typeName(String name) {
@@ -131,14 +141,14 @@ final class ItemConverter {
     }
 
     /** The item's script properties, or null if its template is missing. */
-    static Map<String, String> properties(ItemDefinition item, String type, Role role, Map<String, Map<String, String>> templates) {
+    static Map<String, String> properties(ItemDefinition item, String type, Role role, Map<String, ZomboidItems.Block> templates) {
         Map<String, String> props = new LinkedHashMap<>();
         if (role.template != null) {
-            Map<String, String> template = templates.get(role.template);
+            ZomboidItems.Block template = templates.get(role.template);
             if (template == null) {
                 return null;
             }
-            template.forEach((k, v) -> {
+            template.properties().forEach((k, v) -> {
                 if (!NOT_COPIED.contains(k.toLowerCase())) {
                     props.put(k, v);
                 }

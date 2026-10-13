@@ -72,19 +72,20 @@ public final class Main {
         System.out.println("zomboid: " + zomboid);
         System.out.println("output:  " + out);
 
-        Map<String, Map<String, String>> templates = ZomboidItems.load(zomboid);
+        ZomboidItems.Scripts scripts = ZomboidItems.load(zomboid);
         try (Store store = new Store(cache)) {
             store.load();
             ItemManager items = new ItemManager(store);
             items.load();
             IconRenderer icons = new IconRenderer(store, items);
-            List<Built> built = build(items, templates);
-            writePack(out.toPath(), built, icons);
+            WeaponModels weapons = new WeaponModels(new ModelExporter(store), scripts, zomboid);
+            List<Built> built = build(items, scripts.items());
+            writePack(out.toPath(), built, icons, weapons);
         }
     }
 
     /** Every item worth having, once per name, lowest id first. */
-    private static List<Built> build(ItemManager items, Map<String, Map<String, String>> templates) {
+    private static List<Built> build(ItemManager items, Map<String, ZomboidItems.Block> templates) {
         List<ItemDefinition> all = new ArrayList<>(items.getItems());
         all.sort(Comparator.comparingInt(d -> d.id));
         Set<String> names = new HashSet<>();
@@ -108,7 +109,7 @@ public final class Main {
     }
 
     /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
-    private static void writePack(Path out, List<Built> built, IconRenderer icons) throws IOException {
+    private static void writePack(Path out, List<Built> built, IconRenderer icons, WeaponModels weapons) throws IOException {
         Path b42 = out.resolve("42");
         Path media = b42.resolve("media");
         deleteTree(media);
@@ -124,7 +125,10 @@ public final class Main {
             "versionMin=42.0.0",
             ""));
 
-        // Icons first: items whose icon won't render are left out.
+        // Icons first: items whose icon won't render are left out. Weapons
+        // get their own held models.
+        StringBuilder models = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
+        int modelCount = 0;
         List<Built> kept = new ArrayList<>();
         Set<String> types = new HashSet<>();
         for (Built b : built) {
@@ -141,8 +145,20 @@ public final class Main {
             ImageIO.write(icon, "png", media.resolve("textures/Item_Gielinor_" + type + ".png").toFile());
             Map<String, String> props = b.properties;
             props.put("Icon", "Gielinor_" + type);
+            if (b.role.isWeapon()) {
+                String model = weapons.export(b.item, type, b.role, media);
+                if (model != null) {
+                    props.remove("WeaponSprite");
+                    // Weapon models are looked up in Base unless the name says which module.
+                    props.put("WeaponSprite", MODULE + "." + type);
+                    models.append('\n').append(model);
+                    modelCount++;
+                }
+            }
             kept.add(new Built(b.item, type, b.role, props));
         }
+        models.append("}\n");
+        Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         StringBuilder names = new StringBuilder("{\n");
@@ -161,7 +177,7 @@ public final class Main {
         Files.writeString(media.resolve("scripts/gielinor_items.txt"), script, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("lua/shared/Translate/EN/ItemName.json"), names, StandardCharsets.UTF_8);
 
-        System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out)");
+        System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out), " + modelCount + " weapon models");
         counts.forEach((role, n) -> System.out.println("  " + role.name().toLowerCase() + ": " + n));
     }
 

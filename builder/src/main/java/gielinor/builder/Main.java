@@ -78,9 +78,9 @@ public final class Main {
             ItemManager items = new ItemManager(store);
             items.load();
             IconRenderer icons = new IconRenderer(store, items);
-            WeaponModels weapons = new WeaponModels(new ModelExporter(store), scripts, zomboid);
+            ItemModels itemModels = new ItemModels(new ModelExporter(store), scripts, zomboid);
             List<Built> built = build(items, scripts.items());
-            writePack(out.toPath(), built, icons, weapons);
+            writePack(out.toPath(), built, icons, itemModels);
         }
     }
 
@@ -109,7 +109,7 @@ public final class Main {
     }
 
     /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
-    private static void writePack(Path out, List<Built> built, IconRenderer icons, WeaponModels weapons) throws IOException {
+    private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels) throws IOException {
         Path b42 = out.resolve("42");
         Path media = b42.resolve("media");
         deleteTree(media);
@@ -126,9 +126,10 @@ public final class Main {
             ""));
 
         // Icons first: items whose icon won't render are left out. Weapons
-        // get their own held models.
+        // get their own held models, everything else its ground model.
         StringBuilder models = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         int modelCount = 0;
+        int groundCount = 0;
         List<Built> kept = new ArrayList<>();
         Set<String> types = new HashSet<>();
         for (Built b : built) {
@@ -145,14 +146,23 @@ public final class Main {
             ImageIO.write(icon, "png", media.resolve("textures/Item_Gielinor_" + type + ".png").toFile());
             Map<String, String> props = b.properties;
             props.put("Icon", "Gielinor_" + type);
+            // Models are looked up in Base unless the name says which module.
             if (b.role.isWeapon()) {
-                String model = weapons.export(b.item, type, b.role, media);
+                String model = itemModels.exportHeld(b.item, type, b.role, media);
                 if (model != null) {
                     props.remove("WeaponSprite");
-                    // Weapon models are looked up in Base unless the name says which module.
                     props.put("WeaponSprite", MODULE + "." + type);
                     models.append('\n').append(model);
                     modelCount++;
+                }
+            } else {
+                String ground = type + "_Ground";
+                String model = itemModels.exportGround(b.item, ground, media);
+                if (model != null) {
+                    props.put("StaticModel", MODULE + "." + ground);
+                    props.put("WorldStaticModel", MODULE + "." + ground);
+                    models.append('\n').append(model);
+                    groundCount++;
                 }
             }
             kept.add(new Built(b.item, type, b.role, props));
@@ -177,7 +187,7 @@ public final class Main {
         Files.writeString(media.resolve("scripts/gielinor_items.txt"), script, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("lua/shared/Translate/EN/ItemName.json"), names, StandardCharsets.UTF_8);
 
-        System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out), " + modelCount + " weapon models");
+        System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out), " + modelCount + " weapon models, " + groundCount + " ground models");
         counts.forEach((role, n) -> System.out.println("  " + role.name().toLowerCase() + ": " + n));
     }
 

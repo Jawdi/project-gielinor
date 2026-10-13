@@ -52,6 +52,10 @@ The builder reads the cache with RuneLite's open-source cache library.
   spears, staves and two-handers fight like their Zomboid counterparts, with
   damage scaled the same way. Food and drink can be eaten. Everything else is
   carried, with no use yet.
+- Models: weapons are held as their own models, lined up like the Zomboid
+  weapon each copies so they sit in the hand the same way; everything else
+  lies on the ground (and shows in hand) as its own model. Faces keep the
+  game's flat colours.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

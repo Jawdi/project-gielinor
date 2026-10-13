@@ -74,6 +74,14 @@ final class ModelExporter {
         return loader.load(id, archive.decompress(store.getStorage().loadArchive(archive)));
     }
 
+    /** The models an identity kit (a body part of the player's look) is made of. */
+    int[] kitModels(int kit) throws IOException {
+        Index configs = store.getIndex(IndexType.CONFIGS);
+        Archive kits = configs.getArchive(ConfigType.IDENTKIT.getId());
+        ArchiveFiles files = kits.getFiles(store.getStorage().loadArchive(kits));
+        return new KitLoader().load(kit, files.findFile(kit).getContents()).models;
+    }
+
     /** The default male player's body (identity kits 18 torso, 26 arms, 33 hands, 36 legs, 42 feet), in game units. */
     List<double[]> defaultBody() throws IOException {
         Index configs = store.getIndex(IndexType.CONFIGS);

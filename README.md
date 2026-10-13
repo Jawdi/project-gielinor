@@ -65,6 +65,10 @@ The builder reads the cache with RuneLite's open-source cache library.
   zombie looks (zombies, zombie monks, zombie pirates and more), each fitted
   onto Zomboid's skeleton as a full-body piece so it moves with Zomboid's
   zombie animations. Special places keep their own zombies.
+- Your character: new characters are Gielinor folk, wearing the game's
+  default player body (male or female) as a full-body piece in its own slot
+  under all other clothing, with Zomboid's hair and beard taken off since the
+  head has its own.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

@@ -150,6 +150,35 @@ public final class Main {
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<outfitManager>\r\n" + female + male + "</outfitManager>\r\n";
     }
 
+    /**
+     * The player's own body, male and female, from the game's default look
+     * (identity kits: male hair 0, jaw 10, torso 18, arms 26, hands 33, legs
+     * 36, feet 42; female hair 45, torso 56, arms 61, hands 67, legs 70, feet
+     * 79), as items worn in the mod's own `gielinor:body` slot under all
+     * other clothing. Returns their script.
+     */
+    private static String bodies(ItemModels itemModels, Path media) throws IOException {
+        StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
+        String[][] looks = {{"Male", "0,10,18,26,33,36,42"}, {"Female", "45,56,61,67,70,79"}};
+        for (String[] look : looks) {
+            int[] kits = java.util.Arrays.stream(look[1].split(",")).mapToInt(Integer::parseInt).toArray();
+            String name = "Gielinor_Body_" + look[0];
+            if (!itemModels.exportKitBody(name, kits, media)) {
+                continue;
+            }
+            script.append("\n    item GielinorBody").append(look[0]).append("\n    {\n")
+                .append("        DisplayCategory = Clothing,\n")
+                .append("        ItemType = base:clothing,\n")
+                .append("        DisplayName = Gielinor body (").append(look[0].toLowerCase()).append("),\n")
+                .append("        Icon = TshirtGeneric,\n")
+                .append("        Weight = 0.01,\n")
+                .append("        BodyLocation = gielinor:body,\n")
+                .append("        ClothingItem = ").append(name).append(",\n")
+                .append("    }\n");
+        }
+        return script.append("}\n").toString();
+    }
+
     private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels, NpcManager npcs) throws IOException {
         Path b42 = out.resolve("42");
         Path media = b42.resolve("media");
@@ -230,6 +259,7 @@ public final class Main {
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("clothing/clothing.xml"), zombies(npcs, itemModels, media), StandardCharsets.UTF_8);
+        Files.writeString(media.resolve("scripts/gielinor_bodies.txt"), bodies(itemModels, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");

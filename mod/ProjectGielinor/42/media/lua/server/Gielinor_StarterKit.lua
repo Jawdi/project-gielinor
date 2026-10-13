@@ -1,6 +1,8 @@
--- New characters start with a few tools and some food from Gielinor.
--- Items come from the locally built content pack; any it doesn't have are
--- skipped.
+-- New characters are Gielinor folk, and start with a few tools and some food
+-- from Gielinor. Items come from the locally built content pack; any it
+-- doesn't have are skipped.
+
+require "Gielinor_Body"
 
 local kit = {
     "Gielinor.BronzeAxe",
@@ -12,6 +14,7 @@ local kit = {
 }
 
 local function giveKit(player)
+    GielinorBody.dress(player)
     local inventory = player:getInventory()
     for _, fullType in ipairs(kit) do
         if getScriptManager():FindItem(fullType) then

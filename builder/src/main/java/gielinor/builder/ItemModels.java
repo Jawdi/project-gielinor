@@ -76,6 +76,17 @@ final class ItemModels {
         return true;
     }
 
+    /** Writes the player's own body, made of identity kits (its default look), as a full-body piece. */
+    boolean exportKitBody(String name, int[] kits, Path media) throws IOException {
+        java.util.List<Integer> models = new java.util.ArrayList<>();
+        for (int kit : kits) {
+            for (int m : exporter.kitModels(kit)) {
+                models.add(m);
+            }
+        }
+        return exportFigure(name, models.stream().mapToInt(Integer::intValue).toArray(), null, null, media);
+    }
+
     /** Models merged into one mesh in game units, recoloured by an item or a creature's definition. */
     private Mesh merged(int[] models, ItemDefinition item, short[] recolorFind, short[] recolorReplace) throws IOException {
         Mesh mesh = new Mesh();

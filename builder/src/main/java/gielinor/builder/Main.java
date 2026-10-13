@@ -84,7 +84,7 @@ public final class Main {
             List<Built> built = build(items, scripts.items());
             NpcManager npcs = new NpcManager(store);
             npcs.load();
-            writePack(out.toPath(), built, icons, itemModels, npcs);
+            writePack(out.toPath(), built, icons, itemModels, npcs, scripts, zomboid);
         }
     }
 
@@ -151,6 +151,72 @@ public final class Main {
     }
 
     /**
+     * Zomboid's animals and the game's creatures that become them, by
+     * Zomboid animal type and NPC id: cows, bulls and calves, chickens and
+     * roosters, sheep, rams and lambs, pigs, boars and piglets, rabbits, rats,
+     * mice, raccoons and the stag for the buck. Types with no counterpart
+     * (turkeys, chicks, does, fawns, rabbit kittens) stay Zomboid's.
+     */
+    private static final String[][] ANIMALS = {
+        {"cow", "2790"}, {"bull", "15625"}, {"cowcalf", "2792"},
+        {"hen", "1173"}, {"cockerel", "1175"},
+        {"ewe", "731"}, {"ram", "1261"}, {"lamb", "1177"},
+        {"sow", "2796"}, {"boar", "11066"}, {"piglet", "2798"},
+        {"rabbuck", "1852"}, {"rabdoe", "1852"},
+        {"rat", "1020"}, {"ratfemale", "1020"}, {"ratbaby", "1020"},
+        {"mouse", "4000"}, {"mousefemale", "4000"}, {"mousepups", "4000"},
+        {"raccoonboar", "1419"}, {"raccoonsow", "1419"}, {"raccoonkit", "1419"},
+        {"buck", "1845"},
+    };
+
+    /**
+     * Each mapped animal type as a model `GielinorAnimal_<type>` in the Base
+     * module (copying the vanilla body model's shader, animations and
+     * attachments, with the creature's mesh) and a body texture of the same
+     * name. The mod points the animal's definition at them. Returns the
+     * models' script.
+     */
+    private static String animals(NpcManager npcs, ItemModels itemModels, ZomboidItems.Scripts scripts, File zomboid, Path media) throws IOException {
+        // Which model each animal type is drawn with, from Zomboid's animal definitions.
+        Map<String, String> bodyModels = new java.util.HashMap<>();
+        java.util.regex.Pattern line = java.util.regex.Pattern.compile("AnimalDefinitions\\.animals\\[\"([^\"]+)\"\\]\\.bodyModel\\s*=\\s*\"([^\"]+)\"");
+        File[] definitions = new File(zomboid, "media/lua/shared/Definitions/animal").listFiles((d, n) -> n.endsWith(".lua"));
+        for (File f : definitions == null ? new File[0] : definitions) {
+            java.util.regex.Matcher m = line.matcher(Files.readString(f.toPath(), StandardCharsets.ISO_8859_1));
+            while (m.find()) {
+                bodyModels.put(m.group(1), m.group(2));
+            }
+        }
+        StringBuilder script = new StringBuilder("module Base\n{\n");
+        int count = 0;
+        for (String[] animal : ANIMALS) {
+            String type = animal[0];
+            NpcDefinition npc = npcs.get(Integer.parseInt(animal[1]));
+            ZomboidItems.Block model = scripts.models().get(bodyModels.get(type));
+            if (npc == null || npc.models == null || model == null || model.properties().get("mesh") == null) {
+                continue;
+            }
+            String mesh = model.properties().get("mesh");
+            File dir = new File(zomboid, "media/models_X/" + mesh).getParentFile();
+            String base = new File(mesh).getName();
+            File[] found = dir.listFiles((d, n) -> n.equalsIgnoreCase(base + ".x"));
+            if (found == null || found.length == 0) {
+                continue;
+            }
+            String name = "GielinorAnimal_" + type;
+            if (!itemModels.exportAnimal(name, npc.models, npc.recolorToFind, npc.recolorToReplace, found[0].toPath(), media)) {
+                continue;
+            }
+            Map<String, String> props = new java.util.LinkedHashMap<>(model.properties());
+            props.put("mesh", "Skinned/Gielinor/" + name);
+            script.append('\n').append(new ZomboidItems.Block("model " + name, props, model.children()).text(4));
+            count++;
+        }
+        System.out.println("  animals: " + count);
+        return script.append("}\n").toString();
+    }
+
+    /**
      * The player's own body, male and female, from the game's default look
      * (identity kits: male hair 0, jaw 10, torso 18, arms 26, hands 33, legs
      * 36, feet 42; female hair 45, torso 56, arms 61, hands 67, legs 70, feet
@@ -179,7 +245,8 @@ public final class Main {
         return script.append("}\n").toString();
     }
 
-    private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels, NpcManager npcs) throws IOException {
+    private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels, NpcManager npcs,
+            ZomboidItems.Scripts scripts, File zomboid) throws IOException {
         Path b42 = out.resolve("42");
         Path media = b42.resolve("media");
         deleteTree(media);
@@ -260,6 +327,7 @@ public final class Main {
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("clothing/clothing.xml"), zombies(npcs, itemModels, media), StandardCharsets.UTF_8);
         Files.writeString(media.resolve("scripts/gielinor_bodies.txt"), bodies(itemModels, media), StandardCharsets.UTF_8);
+        Files.writeString(media.resolve("scripts/gielinor_animals.txt"), animals(npcs, itemModels, scripts, zomboid, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");

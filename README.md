@@ -69,6 +69,11 @@ The builder reads the cache with RuneLite's open-source cache library.
   default player body (male or female) as a full-body piece in its own slot
   under all other clothing, with Zomboid's hair and beard taken off since the
   head has its own.
+- Animals: Zomboid's cows, bulls and calves, chickens and roosters, sheep,
+  rams and lambs, pigs, boars and piglets, rabbits, rats, mice, raccoons and
+  bucks take the look of their Gielinor counterparts, each fitted onto the
+  Zomboid animal's own skeleton so its animations, behaviour and husbandry
+  carry on. Turkeys, chicks, does and fawns keep Zomboid's look.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

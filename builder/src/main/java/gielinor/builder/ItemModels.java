@@ -76,6 +76,36 @@ final class ItemModels {
         return true;
     }
 
+    /**
+     * Writes a creature fitted onto one of Zomboid's animals: its mesh skinned
+     * to that animal's skeleton (read from `animalMesh`), and its colours as
+     * a body texture `textures/Body/<name>.png` for the animal's breeds to
+     * use. Returns false if it has nothing to show.
+     */
+    boolean exportAnimal(String name, int[] models, short[] recolorFind, short[] recolorReplace, Path animalMesh, Path media) throws IOException {
+        Mesh mesh = merged(models, null, recolorFind, recolorReplace);
+        if (mesh.faces.isEmpty()) {
+            return false;
+        }
+        Skeleton animal = Skeleton.read(animalMesh);
+        BodyFit.Bound[] bounds = new AnimalFit(animal).fit(mesh.vertices);
+        for (int i = 0; i < bounds.length; i++) {
+            mesh.vertices.set(i, bounds[i].position());
+        }
+        if (mesh.outwardVote() >= 0 != outward) {
+            mesh.flipWinding();
+        }
+        Palette palette = new Palette();
+        mesh.colours.forEach(palette::add);
+        Path meshDir = media.resolve("models_X/Skinned/Gielinor");
+        Path textureDir = media.resolve("textures/Body");
+        Files.createDirectories(meshDir);
+        Files.createDirectories(textureDir);
+        mesh.writeSkinnedX(meshDir.resolve(name + ".X"), name, name + ".png", palette, animal, bounds);
+        palette.write(textureDir.resolve(name + ".png"));
+        return true;
+    }
+
     /** Writes the player's own body, made of identity kits (its default look), as a full-body piece. */
     boolean exportKitBody(String name, int[] kits, Path media) throws IOException {
         java.util.List<Integer> models = new java.util.ArrayList<>();

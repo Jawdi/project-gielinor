@@ -27,6 +27,8 @@ final class Skeleton {
     final Map<String, double[]> bindPositions = new LinkedHashMap<>();
     /** The body's T-pose vertices, for measuring its shape. */
     final List<double[]> bodyVertices;
+    /** Each frame's parent frame, from the frame hierarchy. */
+    final Map<String, String> parents = new LinkedHashMap<>();
 
     private Skeleton(String header, List<double[]> bodyVertices) {
         this.header = header;
@@ -39,9 +41,37 @@ final class Skeleton {
         if (!mesh.find()) {
             throw new IOException("no mesh in " + maleBody);
         }
-        // The mesh sits in a frame of its own; the header ends where that frame starts.
-        int frame = text.lastIndexOf("\nFrame ", mesh.start());
-        Skeleton skeleton = new Skeleton(text.substring(0, frame + 1), Mesh.readX(maleBody).vertices);
+        // The mesh sits in a top-level frame of its own, before the bone frames
+        // in some files and after them in others; the header is the file
+        // without that frame and without its animation set.
+        int frame = text.lastIndexOf("\nFrame ", mesh.start()) + 1;
+        String header = text.substring(0, frame) + text.substring(blockEnd(text, frame));
+        Matcher anims = Pattern.compile("(?m)^AnimationSet\\b").matcher(header);
+        if (anims.find()) {
+            header = header.substring(0, anims.start()) + header.substring(blockEnd(header, anims.start()));
+        }
+        Skeleton skeleton = new Skeleton(header, Mesh.readX(maleBody).vertices);
+        // Frames nest: walk the braces to see which frame each sits in.
+        Matcher token = Pattern.compile("Frame\\s+(\\S+)\\s*\\{|\\{|\\}").matcher(skeleton.header);
+        List<String> open = new ArrayList<>();
+        List<Integer> depths = new ArrayList<>();
+        int depth = 0;
+        while (token.find()) {
+            if (token.group(1) != null) {
+                depth++;
+                skeleton.parents.put(token.group(1), open.isEmpty() ? null : open.get(open.size() - 1));
+                open.add(token.group(1));
+                depths.add(depth);
+            } else if (token.group().equals("{")) {
+                depth++;
+            } else {
+                if (!depths.isEmpty() && depths.get(depths.size() - 1) == depth) {
+                    open.remove(open.size() - 1);
+                    depths.remove(depths.size() - 1);
+                }
+                depth--;
+            }
+        }
         Matcher sw = Pattern.compile("SkinWeights\\s*\\{\\s*\"([^\"]+)\";\\s*(\\d+);").matcher(text);
         Pattern number = Pattern.compile("-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?");
         while (sw.find()) {
@@ -62,6 +92,20 @@ final class Skeleton {
             skeleton.bindPositions.put(bone, new double[]{world[12], world[13], world[14]});
         }
         return skeleton;
+    }
+
+    /** The index just past the block whose first brace follows `start`. */
+    private static int blockEnd(String text, int start) {
+        int depth = 0;
+        for (int i = text.indexOf('{', start); i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                return i + 1;
+            }
+        }
+        return text.length();
     }
 
     double[] bind(String bone) {

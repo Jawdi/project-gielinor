@@ -16,6 +16,8 @@ import java.util.TreeMap;
 import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import net.runelite.cache.ItemManager;
+import net.runelite.cache.NpcManager;
+import net.runelite.cache.definitions.NpcDefinition;
 import net.runelite.cache.definitions.ItemDefinition;
 import net.runelite.cache.fs.Store;
 
@@ -80,7 +82,9 @@ public final class Main {
             IconRenderer icons = new IconRenderer(store, items);
             ItemModels itemModels = new ItemModels(new ModelExporter(store), scripts, zomboid);
             List<Built> built = build(items, scripts.items());
-            writePack(out.toPath(), built, icons, itemModels);
+            NpcManager npcs = new NpcManager(store);
+            npcs.load();
+            writePack(out.toPath(), built, icons, itemModels, npcs);
         }
     }
 
@@ -109,7 +113,44 @@ public final class Main {
     }
 
     /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
-    private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels) throws IOException {
+    /**
+     * Every distinct zombie in the game as a full-body clothing piece, each
+     * its own zombie outfit (`GielinorZombie_<npc id>`) for the mod to put
+     * among Zomboid's zombies. Returns the outfits' `clothing.xml`.
+     */
+    private static String zombies(NpcManager npcs, ItemModels itemModels, Path media) throws IOException {
+        List<NpcDefinition> all = new ArrayList<>(npcs.getNpcs());
+        all.sort(Comparator.comparingInt(n -> n.id));
+        Set<String> seen = new HashSet<>();
+        StringBuilder male = new StringBuilder();
+        StringBuilder female = new StringBuilder();
+        int count = 0;
+        for (NpcDefinition n : all) {
+            if (n.name == null || !n.name.toLowerCase().contains("zombie") || n.models == null || n.models.length == 0) {
+                continue;
+            }
+            String look = java.util.Arrays.toString(n.models) + java.util.Arrays.toString(n.recolorToReplace);
+            if (!seen.add(look)) {
+                continue;
+            }
+            String name = "Gielinor_Zombie_" + n.id;
+            if (!itemModels.exportFigure(name, n.models, n.recolorToFind, n.recolorToReplace, media)) {
+                continue;
+            }
+            String guid = itemModels.guidOf(name);
+            String outfitGuid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:outfit:" + name).getBytes(StandardCharsets.UTF_8)).toString();
+            String outfit = "\t\t<m_Name>GielinorZombie_" + n.id + "</m_Name>\r\n\t\t<m_Guid>" + outfitGuid + "</m_Guid>\r\n"
+                + "\t\t<m_Top>false</m_Top>\r\n\t\t<m_Pants>false</m_Pants>\r\n"
+                + "\t\t<m_items>\r\n\t\t\t<itemGUID>" + guid + "</itemGUID>\r\n\t\t</m_items>\r\n";
+            male.append("\t<m_MaleOutfits>\r\n").append(outfit).append("\t</m_MaleOutfits>\r\n");
+            female.append("\t<m_FemaleOutfits>\r\n").append(outfit).append("\t</m_FemaleOutfits>\r\n");
+            count++;
+        }
+        System.out.println("  zombie looks: " + count);
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<outfitManager>\r\n" + female + male + "</outfitManager>\r\n";
+    }
+
+    private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels, NpcManager npcs) throws IOException {
         Path b42 = out.resolve("42");
         Path media = b42.resolve("media");
         deleteTree(media);
@@ -188,6 +229,7 @@ public final class Main {
         }
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
+        Files.writeString(media.resolve("clothing/clothing.xml"), zombies(npcs, itemModels, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");

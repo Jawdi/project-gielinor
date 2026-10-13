@@ -25,12 +25,84 @@ final class BodyFit {
     private static final double[] ZOMBOID_ARM = {0.103, 0.238, 0.374, 0.49};
     /** The game's arms hang this far either side of the middle. */
     private static final double GAME_ARM_X = 27;
+    /** From the player's shoulder to fingertip. */
+    private static final double PLAYER_ARM_LENGTH = 72;
+    /** How far either side of the middle the player's feet stand. */
+    private static final double GAME_FOOT_X = 9;
     /** Clothes sit a little proud of the body so it doesn't show through. */
     private static final double INFLATE = 1.06;
     private static final double BAND = 0.05;
 
     /** A vertex bound to a bone. */
     record Bound(double[] position, String bone) {
+    }
+
+    /**
+     * How a model stands: the height of its crown, and its arms as a unit
+     * direction from the shoulder (outward, downward) and a length, all in
+     * game units. The player stands with arms hanging; many creatures'
+     * models hold their arms out in an A shape.
+     */
+    record Pose(double crown, double out, double down, double armLength, double shoulderX, double footX) {
+        /**
+         * The game's player: crown 196 up, arms hanging straight down 72 to
+         * the fingertips from shoulders 27 either side, feet 9 either side.
+         */
+        static final Pose PLAYER = new Pose(196, 0, 1, 72, GAME_ARM_X, GAME_FOOT_X);
+
+        /** How much to scale a model by to bring it to the player's size. */
+        double toPlayer() {
+            return PLAYER.crown / crown;
+        }
+
+        /**
+         * Estimates a whole figure's pose from its vertices (game units, y
+         * down): its crown is its highest point and its fingertips the
+         * farthest point out at arm height.
+         */
+        static Pose of(List<double[]> vertices) {
+            double crown = 0;
+            for (double[] v : vertices) {
+                crown = Math.max(crown, -v[1]);
+            }
+            if (crown <= 0) {
+                return PLAYER;
+            }
+            double k = PLAYER.crown / crown;
+            // Shoulders: the widest point just below the shoulder line, less
+            // the arm's own thickness. Feet: how far out the soles sit.
+            double shoulderWidth = 0;
+            double feet = 0;
+            int soles = 0;
+            double[] tip = null;
+            for (double[] v : vertices) {
+                double x = Math.abs(v[0]) * k;
+                double h = -v[1] * k;
+                if (h > 150 && h < 162) {
+                    shoulderWidth = Math.max(shoulderWidth, x);
+                }
+                if (h < 12) {
+                    feet += x;
+                    soles++;
+                }
+                if (h > 85 && h < 150 && (tip == null || x > tip[0])) {
+                    tip = new double[]{x, h};
+                }
+            }
+            double shoulderX = shoulderWidth > 0 ? Math.max(GAME_ARM_X, shoulderWidth - 7) : GAME_ARM_X;
+            double footX = soles > 0 ? feet / soles : GAME_FOOT_X;
+            if (tip == null || tip[0] < shoulderX + 8) {
+                return new Pose(crown, 0, 1, PLAYER.armLength, shoulderX, footX);
+            }
+            double out = tip[0] - shoulderX;
+            double down = GAME_HEIGHTS[4] - tip[1];
+            double length = Math.hypot(out, down);
+            if (length < 20) {
+                return new Pose(crown, 0, 1, PLAYER.armLength, shoulderX, footX);
+            }
+            // The tip found is the hand; the fingertips reach a little further.
+            return new Pose(crown, out / length, down / length, length * 1.1, shoulderX, footX);
+        }
     }
 
     private record Segment(String bone, double[] a, double[] b, boolean arm) {
@@ -127,16 +199,40 @@ final class BodyFit {
      * aren't arms however wide they hang.
      */
     Bound fit(double x, double y, double z, boolean armsAllowed) {
-        double h = -y;
+        return fit(x, y, z, Pose.PLAYER, armsAllowed);
+    }
+
+    /** The same for a model standing in `pose`, scaled to the player's size first. */
+    Bound fit(double x, double y, double z, Pose pose, boolean armsAllowed) {
+        double k = pose.toPlayer();
+        x *= k;
+        z *= k;
+        double h = -y * k;
         double[] p;
-        boolean arm = armsAllowed && isArm(x, h);
+        // Along the arm from the shoulder, and across it (positive on the
+        // side that ends up on top once the arm is raised).
+        double rx = Math.abs(x) - pose.shoulderX();
+        double rh = GAME_HEIGHTS[4] - h;
+        double along = rx * pose.out() + rh * pose.down();
+        double across = rx * pose.down() - rh * pose.out();
+        // On the arm: close to the arm's line below the shoulder, or anywhere
+        // out past the shoulder (hands and fingers spread wider than the
+        // arm's line, and can hang below the hips). Legs stay well inside the
+        // shoulders.
+        boolean arm = armsAllowed && h > 80 && along > 2 && (across > -6 && across < 16 || rx > 6);
         if (arm) {
             double side = Math.signum(x);
-            double down = Math.max(0, GAME_HEIGHTS[4] - h);
-            double out = interpolate(GAME_ARM, ZOMBOID_ARM, down);
-            double across = (Math.abs(x) - GAME_ARM_X) * ModelExporter.SCALE * armRatio * INFLATE;
-            p = new double[]{side * out, ZOMBOID_HEIGHTS[4] + across, z * ModelExporter.SCALE * armRatio * INFLATE + 0.04};
+            double stretch = PLAYER_ARM_LENGTH / pose.armLength();
+            double out = interpolate(GAME_ARM, ZOMBOID_ARM, along * stretch);
+            double lift = across * ModelExporter.SCALE * armRatio * INFLATE;
+            p = new double[]{side * out, ZOMBOID_HEIGHTS[4] + lift, z * ModelExporter.SCALE * armRatio * INFLATE + 0.04};
         } else {
+            // Legs standing wider than the player's lean in, more the lower
+            // they go, so the feet end up under the hips.
+            double hip = GAME_HEIGHTS[3];
+            if (h < hip) {
+                x -= Math.signum(x) * (pose.footX() - GAME_FOOT_X) * (hip - h) / hip;
+            }
             double zy = height(h);
             double w = sample(widthRatio, zy);
             double d = sample(depthRatio, zy);

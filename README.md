@@ -61,6 +61,10 @@ The builder reads the cache with RuneLite's open-source cache library.
   fitted onto Zomboid's skeleton so it moves with the character. Armour
   protects against bites and scratches by its defence bonuses (a rune
   platebody about 57 out of 100).
+- Zombies: about four in five ordinary zombies are one of the game's 148
+  zombie looks (zombies, zombie monks, zombie pirates and more), each fitted
+  onto Zomboid's skeleton as a full-body piece so it moves with Zomboid's
+  zombie animations. Special places keep their own zombies.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

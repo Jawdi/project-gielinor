@@ -51,11 +51,43 @@ final class ItemModels {
      * clothing definition. Returns false if it has nothing to show.
      */
     boolean exportWorn(ItemDefinition item, String type, ItemConverter.Slot slot, Path media) throws IOException {
+        Mesh mesh = merged(new int[]{item.maleModel0, item.maleModel1, item.maleModel2}, item, null, null);
+        if (mesh.faces.isEmpty()) {
+            return false;
+        }
+        String[] bones = fitted(mesh, BodyFit.Pose.PLAYER, slot != ItemConverter.Slot.CAPE);
+        writeClothing("Gielinor_" + type, mesh, bones, masks(slot, bones), media);
+        return true;
+    }
+
+    /**
+     * Writes a whole creature (a zombie, say) as one skinned clothing piece
+     * that hides the body under it entirely: its models merged and recoloured
+     * as its definition says, its pose read from its arms. Returns false if
+     * it has nothing to show.
+     */
+    boolean exportFigure(String name, int[] models, short[] recolorFind, short[] recolorReplace, Path media) throws IOException {
+        Mesh mesh = merged(models, null, recolorFind, recolorReplace);
+        if (mesh.faces.isEmpty()) {
+            return false;
+        }
+        String[] bones = fitted(mesh, BodyFit.Pose.of(mesh.vertices), true);
+        writeClothing(name, mesh, bones, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), media);
+        return true;
+    }
+
+    /** Models merged into one mesh in game units, recoloured by an item or a creature's definition. */
+    private Mesh merged(int[] models, ItemDefinition item, short[] recolorFind, short[] recolorReplace) throws IOException {
         Mesh mesh = new Mesh();
-        for (int id : new int[]{item.maleModel0, item.maleModel1, item.maleModel2}) {
+        for (int id : models) {
             ModelDefinition definition = id > 0 ? exporter.load(id) : null;
             if (definition == null) {
                 continue;
+            }
+            if (recolorFind != null) {
+                for (int i = 0; i < recolorFind.length; i++) {
+                    definition.recolor(recolorFind[i], recolorReplace[i]);
+                }
             }
             Mesh part = exporter.rawMesh(definition, item);
             int base = mesh.vertices.size();
@@ -65,20 +97,80 @@ final class ItemModels {
             }
             mesh.colours.addAll(part.colours);
         }
-        if (mesh.faces.isEmpty()) {
-            return false;
-        }
+        return mesh;
+    }
+
+    /** Fits every vertex onto the T-pose, winds faces Zomboid's way, and returns each vertex's bone. */
+    private String[] fitted(Mesh mesh, BodyFit.Pose pose, boolean armsAllowed) {
         String[] bones = new String[mesh.vertices.size()];
         for (int i = 0; i < mesh.vertices.size(); i++) {
             double[] v = mesh.vertices.get(i);
-            BodyFit.Bound bound = fit.fit(v[0], v[1], v[2], slot != ItemConverter.Slot.CAPE);
+            BodyFit.Bound bound = fit.fit(v[0], v[1], v[2], pose, armsAllowed);
             mesh.vertices.set(i, bound.position());
             bones[i] = bound.bone();
         }
         if (mesh.outwardVote() >= 0 != outward) {
             mesh.flipWinding();
         }
-        String name = "Gielinor_" + type;
+        return bones;
+    }
+
+    /**
+     * The body parts a worn piece hides (Zomboid's character mask parts: 1
+     * torso, 2 pelvis, 3 and 5 the left and right arm, 4 and 6 the hands, 7
+     * and 9 the legs, 8 and 10 the feet), so the body doesn't show through
+     * it. A part is hidden only if the piece really covers it.
+     */
+    private static java.util.List<Integer> masks(ItemConverter.Slot slot, String[] bones) {
+        java.util.Set<String> used = new java.util.HashSet<>(java.util.Arrays.asList(bones));
+        java.util.List<Integer> out = new java.util.ArrayList<>();
+        switch (slot) {
+            case BODY -> {
+                if (used.contains("Bip01_Spine") && used.contains("Bip01_Spine1")) {
+                    out.add(1);
+                }
+                if (used.contains("Bip01_L_UpperArm") && used.contains("Bip01_L_Forearm")) {
+                    out.add(3);
+                }
+                if (used.contains("Bip01_R_UpperArm") && used.contains("Bip01_R_Forearm")) {
+                    out.add(5);
+                }
+            }
+            case LEGS -> {
+                if (used.contains("Bip01_Pelvis")) {
+                    out.add(2);
+                }
+                if (used.contains("Bip01_L_Thigh") && used.contains("Bip01_L_Calf")) {
+                    out.add(7);
+                }
+                if (used.contains("Bip01_R_Thigh") && used.contains("Bip01_R_Calf")) {
+                    out.add(9);
+                }
+            }
+            case HANDS -> {
+                if (used.contains("Bip01_L_Hand")) {
+                    out.add(4);
+                }
+                if (used.contains("Bip01_R_Hand")) {
+                    out.add(6);
+                }
+            }
+            case FEET -> {
+                if (used.contains("Bip01_L_Foot")) {
+                    out.add(8);
+                }
+                if (used.contains("Bip01_R_Foot")) {
+                    out.add(10);
+                }
+            }
+            default -> {
+            }
+        }
+        return out;
+    }
+
+    /** Writes a skinned clothing piece: its mesh, palette and clothing definition. */
+    private void writeClothing(String name, Mesh mesh, String[] bones, java.util.List<Integer> masks, Path media) throws IOException {
         Palette palette = new Palette();
         mesh.colours.forEach(palette::add);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
@@ -93,22 +185,25 @@ final class ItemModels {
         clothingGuids.put(path, guid);
         Files.createDirectories(media.resolve("clothing/clothingItems"));
         // The same mesh serves both bodies until there's a fit for the female skeleton.
-        Files.writeString(media.resolve("clothing/clothingItems/" + name + ".xml"), String.join("\r\n",
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
-            "<clothingItem>",
-            "\t<m_GUID>" + guid + "</m_GUID>",
-            "\t<m_MaleModel>skinned\\clothes\\gielinor\\" + name + "</m_MaleModel>",
-            "\t<m_FemaleModel>skinned\\clothes\\gielinor\\" + name + "</m_FemaleModel>",
-            "\t<m_AltMaleModel></m_AltMaleModel>",
-            "\t<m_AltFemaleModel></m_AltFemaleModel>",
-            "\t<m_Static>false</m_Static>",
-            "\t<m_AllowRandomHue>false</m_AllowRandomHue>",
-            "\t<m_AllowRandomTint>false</m_AllowRandomTint>",
-            "\t<m_AttachBone></m_AttachBone>",
-            "\t<textureChoices>clothes\\gielinor\\" + name + "</textureChoices>",
-            "</clothingItem>",
-            ""));
-        return true;
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<clothingItem>\r\n");
+        xml.append("\t<m_GUID>").append(guid).append("</m_GUID>\r\n");
+        xml.append("\t<m_MaleModel>skinned\\clothes\\gielinor\\").append(name).append("</m_MaleModel>\r\n");
+        xml.append("\t<m_FemaleModel>skinned\\clothes\\gielinor\\").append(name).append("</m_FemaleModel>\r\n");
+        xml.append("\t<m_AltMaleModel></m_AltMaleModel>\r\n\t<m_AltFemaleModel></m_AltFemaleModel>\r\n");
+        xml.append("\t<m_Static>false</m_Static>\r\n\t<m_AllowRandomHue>false</m_AllowRandomHue>\r\n");
+        xml.append("\t<m_AllowRandomTint>false</m_AllowRandomTint>\r\n\t<m_AttachBone></m_AttachBone>\r\n");
+        for (int mask : masks) {
+            xml.append("\t<m_Masks>").append(mask).append("</m_Masks>\r\n");
+        }
+        xml.append("\t<textureChoices>clothes\\gielinor\\").append(name).append("</textureChoices>\r\n");
+        xml.append("</clothingItem>\r\n");
+        Files.writeString(media.resolve("clothing/clothingItems/" + name + ".xml"), xml);
+    }
+
+    /** The clothing definitions written so far, by name, with their GUIDs. */
+    String guidOf(String name) {
+        return clothingGuids.get("media/clothing/clothingItems/" + name + ".xml");
     }
 
     /** Writes `fileGuidTable.xml`, which tells the game which GUID each clothing definition has. */

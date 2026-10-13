@@ -29,6 +29,10 @@ final class ItemModels {
     private final Map<String, Mesh> templateMeshes = new HashMap<>();
     /** Whether Zomboid's meshes are wound with normals facing out, measured on a vanilla mesh. */
     private final boolean outward;
+    private final Skeleton skeleton;
+    private final BodyFit fit;
+    /** Clothing definitions written so far: their file paths and GUIDs, for `fileGuidTable.xml`. */
+    private final Map<String, String> clothingGuids = new java.util.LinkedHashMap<>();
 
     ItemModels(ModelExporter exporter, ZomboidItems.Scripts scripts, File install) throws IOException {
         this.exporter = exporter;
@@ -37,6 +41,83 @@ final class ItemModels {
         this.hand = exporter.hand();
         Mesh reference = templateMesh(scripts.models().get("HandAxe"));
         this.outward = reference == null || reference.outwardVote() >= 0;
+        this.skeleton = Skeleton.read(new File(install, "media/models_X/Skinned/MaleBody.x").toPath());
+        this.fit = new BodyFit(skeleton, exporter.defaultBody());
+    }
+
+    /**
+     * Writes a worn item as Zomboid clothing: its worn models fitted onto
+     * Zomboid's T-pose and skinned to its skeleton, a palette texture, and a
+     * clothing definition. Returns false if it has nothing to show.
+     */
+    boolean exportWorn(ItemDefinition item, String type, ItemConverter.Slot slot, Path media) throws IOException {
+        Mesh mesh = new Mesh();
+        for (int id : new int[]{item.maleModel0, item.maleModel1, item.maleModel2}) {
+            ModelDefinition definition = id > 0 ? exporter.load(id) : null;
+            if (definition == null) {
+                continue;
+            }
+            Mesh part = exporter.rawMesh(definition, item);
+            int base = mesh.vertices.size();
+            mesh.vertices.addAll(part.vertices);
+            for (int[] f : part.faces) {
+                mesh.faces.add(new int[]{f[0] + base, f[1] + base, f[2] + base});
+            }
+            mesh.colours.addAll(part.colours);
+        }
+        if (mesh.faces.isEmpty()) {
+            return false;
+        }
+        String[] bones = new String[mesh.vertices.size()];
+        for (int i = 0; i < mesh.vertices.size(); i++) {
+            double[] v = mesh.vertices.get(i);
+            BodyFit.Bound bound = fit.fit(v[0], v[1], v[2], slot != ItemConverter.Slot.CAPE);
+            mesh.vertices.set(i, bound.position());
+            bones[i] = bound.bone();
+        }
+        if (mesh.outwardVote() >= 0 != outward) {
+            mesh.flipWinding();
+        }
+        String name = "Gielinor_" + type;
+        Palette palette = new Palette();
+        mesh.colours.forEach(palette::add);
+        Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
+        Path textureDir = media.resolve("textures/Clothes/Gielinor");
+        Files.createDirectories(meshDir);
+        Files.createDirectories(textureDir);
+        mesh.writeSkinnedX(meshDir.resolve(name + ".X"), name, name + ".png", palette, skeleton, bones);
+        palette.write(textureDir.resolve(name + ".png"));
+
+        String guid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        String path = "media/clothing/clothingItems/" + name + ".xml";
+        clothingGuids.put(path, guid);
+        Files.createDirectories(media.resolve("clothing/clothingItems"));
+        // The same mesh serves both bodies until there's a fit for the female skeleton.
+        Files.writeString(media.resolve("clothing/clothingItems/" + name + ".xml"), String.join("\r\n",
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+            "<clothingItem>",
+            "\t<m_GUID>" + guid + "</m_GUID>",
+            "\t<m_MaleModel>skinned\\clothes\\gielinor\\" + name + "</m_MaleModel>",
+            "\t<m_FemaleModel>skinned\\clothes\\gielinor\\" + name + "</m_FemaleModel>",
+            "\t<m_AltMaleModel></m_AltMaleModel>",
+            "\t<m_AltFemaleModel></m_AltFemaleModel>",
+            "\t<m_Static>false</m_Static>",
+            "\t<m_AllowRandomHue>false</m_AllowRandomHue>",
+            "\t<m_AllowRandomTint>false</m_AllowRandomTint>",
+            "\t<m_AttachBone></m_AttachBone>",
+            "\t<textureChoices>clothes\\gielinor\\" + name + "</textureChoices>",
+            "</clothingItem>",
+            ""));
+        return true;
+    }
+
+    /** Writes `fileGuidTable.xml`, which tells the game which GUID each clothing definition has. */
+    void writeGuidTable(Path media) throws IOException {
+        StringBuilder out = new StringBuilder("<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<fileGuidTable>\r\n");
+        clothingGuids.forEach((path, guid) -> out.append("\t<files>\r\n\t\t<path>").append(path).append("</path>\r\n\t\t<guid>")
+            .append(guid).append("</guid>\r\n\t</files>\r\n"));
+        out.append("</fileGuidTable>\r\n");
+        Files.writeString(media.resolve("fileGuidTable.xml"), out);
     }
 
     /** The vanilla model block a role's template weapon is drawn with, if any. */

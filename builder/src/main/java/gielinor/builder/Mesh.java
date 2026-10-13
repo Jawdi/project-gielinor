@@ -82,7 +82,20 @@ final class Mesh {
      * in the palette texture `texture`.
      */
     void writeX(Path file, String name, String texture, Palette palette) throws IOException {
-        StringBuilder out = new StringBuilder("xof 0303txt 0032\n\n");
+        writeX(file, name, texture, palette, null, null);
+    }
+
+    /**
+     * Writes the mesh skinned to Zomboid's skeleton: the skeleton's frames
+     * first, then the mesh with one `SkinWeights` block per bone used.
+     * `bones` names the bone each vertex is bound to.
+     */
+    void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, String[] bones) throws IOException {
+        writeX(file, name, texture, palette, skeleton, bones);
+    }
+
+    private void writeX(Path file, String name, String texture, Palette palette, Skeleton skeleton, String[] bones) throws IOException {
+        StringBuilder out = new StringBuilder(skeleton == null ? "xof 0303txt 0032\n\n" : skeleton.header);
         out.append("Material Gielinor {\n 1.000000;1.000000;1.000000;1.000000;;\n 0.000000;\n 0.000000;0.000000;0.000000;;\n 0.000000;0.000000;0.000000;;\n");
         out.append(" TextureFilename {\n  \"").append(texture).append("\";\n }\n}\n\n");
         out.append("Frame ").append(name).append(" {\n FrameTransformMatrix {\n  1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000;;\n }\n\n");
@@ -120,8 +133,41 @@ final class Mesh {
                 out.append("   ").append(f(uv[0])).append(';').append(f(uv[1])).append(';').append(i == n - 1 && k == 2 ? ";\n" : ",\n");
             }
         }
-        out.append("  }\n }\n}\n");
+        out.append("  }\n");
+        if (skeleton != null) {
+            appendSkin(out, skeleton, bones);
+        }
+        out.append(" }\n}\n");
         Files.writeString(file, out, StandardCharsets.ISO_8859_1);
+    }
+
+    /** The skin: which bone each written vertex follows, one block a bone, with full weight. */
+    private void appendSkin(StringBuilder out, Skeleton skeleton, String[] bones) {
+        // Vertices are written three a face, so face i's corners are 3i to 3i+2.
+        java.util.Map<String, List<Integer>> byBone = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < faces.size(); i++) {
+            int[] face = faces.get(i);
+            for (int k = 0; k < 3; k++) {
+                byBone.computeIfAbsent(bones[face[k]], b -> new ArrayList<>()).add(i * 3 + k);
+            }
+        }
+        out.append("\n  XSkinMeshHeader {\n   1;\n   3;\n   ").append(byBone.size()).append(";\n  }\n");
+        for (java.util.Map.Entry<String, List<Integer>> e : byBone.entrySet()) {
+            List<Integer> idx = e.getValue();
+            out.append("\n  SkinWeights {\n   \"").append(e.getKey()).append("\";\n   ").append(idx.size()).append(";\n");
+            for (int i = 0; i < idx.size(); i++) {
+                out.append("   ").append(idx.get(i)).append(i + 1 < idx.size() ? ",\n" : ";\n");
+            }
+            for (int i = 0; i < idx.size(); i++) {
+                out.append("   1.000000").append(i + 1 < idx.size() ? ",\n" : ";\n");
+            }
+            double[] m = skeleton.offsets.get(e.getKey());
+            out.append("   ");
+            for (int i = 0; i < 16; i++) {
+                out.append(f(m[i])).append(i < 15 ? "," : ";;\n");
+            }
+            out.append("  }\n");
+        }
     }
 
     /** A face's unit normal, by its winding. */

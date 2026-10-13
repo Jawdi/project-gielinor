@@ -34,6 +34,8 @@ final class ItemConverter {
         STAFF("BaseballBat"),
         FOOD("Apple"),
         DRINK("Apple"),
+        /** Worn: clothing or armour. */
+        WEAR(null),
         /** Carried, with no use of its own yet. */
         PLAIN(null);
 
@@ -44,7 +46,43 @@ final class ItemConverter {
         }
 
         boolean isWeapon() {
-            return this != FOOD && this != DRINK && this != PLAIN;
+            return this != FOOD && this != DRINK && this != WEAR && this != PLAIN;
+        }
+    }
+
+    /**
+     * Where a worn item goes on a Zomboid character, by the game's equipment
+     * slot: head, cape, neck, body, legs, hands, feet and ring. Capes take the
+     * scarf slot so they don't take the place of a backpack. Shields and ammo
+     * have no Zomboid place yet.
+     */
+    enum Slot {
+        HEAD(0, "base:hat", "Head"),
+        CAPE(1, "base:scarf", null),
+        NECK(2, "base:necklace", null),
+        BODY(4, "base:jacket", "Jacket"),
+        LEGS(7, "base:pants", "Trousers"),
+        HANDS(9, "base:hands", "Hands"),
+        FEET(10, "base:shoes", "Shoes"),
+        RING(12, "base:right_ringfinger", null);
+
+        final int equipment;
+        final String bodyLocation;
+        final String bloodLocation;
+
+        Slot(int equipment, String bodyLocation, String bloodLocation) {
+            this.equipment = equipment;
+            this.bodyLocation = bodyLocation;
+            this.bloodLocation = bloodLocation;
+        }
+
+        static Slot of(int equipment) {
+            for (Slot s : values()) {
+                if (s.equipment == equipment) {
+                    return s;
+                }
+            }
+            return null;
         }
     }
 
@@ -77,7 +115,30 @@ final class ItemConverter {
         if ("Drink".equalsIgnoreCase(first)) {
             return Role.DRINK;
         }
+        if (Slot.of(item.wearPos1) != null && item.maleModel0 > 0) {
+            return Role.WEAR;
+        }
         return Role.PLAIN;
+    }
+
+    /** Item params holding defence against stab, slash and crush attacks. */
+    private static final int[] PARAM_DEFENCE = {5, 6, 7};
+
+    /**
+     * How much a worn item protects against bites and scratches, out of 100:
+     * its best melee defence bonus d as 100d / (d + 60), so a bronze helm
+     * gives about 6 and a rune platebody about 57.
+     */
+    static int protection(ItemDefinition item) {
+        int best = 0;
+        if (item.params != null) {
+            for (int p : PARAM_DEFENCE) {
+                if (item.params.get(p) instanceof Integer i) {
+                    best = Math.max(best, i);
+                }
+            }
+        }
+        return (int) Math.round(100.0 * best / (best + 60));
     }
 
     /** Properties never copied from a template: its own looks, name and crafting ties. */
@@ -153,6 +214,20 @@ final class ItemConverter {
                     props.put(k, v);
                 }
             });
+        } else if (role == Role.WEAR) {
+            Slot slot = Slot.of(item.wearPos1);
+            int protection = protection(item);
+            props.put("DisplayCategory", protection > 0 ? "ProtectiveGear" : "Clothing");
+            props.put("ItemType", "base:clothing");
+            props.put("BodyLocation", slot.bodyLocation);
+            props.put("ClothingItem", "Gielinor_" + type);
+            if (slot.bloodLocation != null) {
+                props.put("BloodLocation", slot.bloodLocation);
+            }
+            if (protection > 0) {
+                props.put("BiteDefense", Integer.toString(protection));
+                props.put("ScratchDefense", Integer.toString(protection));
+            }
         } else {
             props.put("DisplayCategory", "Material");
             props.put("ItemType", "base:normal");

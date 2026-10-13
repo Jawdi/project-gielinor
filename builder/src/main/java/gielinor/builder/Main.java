@@ -130,6 +130,7 @@ public final class Main {
         StringBuilder models = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         int modelCount = 0;
         int groundCount = 0;
+        int wornCount = 0;
         List<Built> kept = new ArrayList<>();
         Set<String> types = new HashSet<>();
         for (Built b : built) {
@@ -156,10 +157,28 @@ public final class Main {
                     modelCount++;
                 }
             } else {
+                boolean worn = false;
+                if (b.role == ItemConverter.Role.WEAR) {
+                    worn = itemModels.exportWorn(b.item, type, ItemConverter.Slot.of(b.item.wearPos1), media);
+                    if (worn) {
+                        props.put("ClothingItem", "Gielinor_" + type);
+                        wornCount++;
+                    } else {
+                        // Nothing to wear after all: carry it instead.
+                        for (String k : new String[]{"BodyLocation", "ClothingItem", "BloodLocation", "BiteDefense", "ScratchDefense"}) {
+                            props.remove(k);
+                        }
+                        props.put("ItemType", "base:normal");
+                        props.put("DisplayCategory", "Material");
+                    }
+                }
                 String ground = type + "_Ground";
                 String model = itemModels.exportGround(b.item, ground, media);
                 if (model != null) {
-                    props.put("StaticModel", MODULE + "." + ground);
+                    // Clothing is worn, not held, so it only needs its ground model.
+                    if (!worn) {
+                        props.put("StaticModel", MODULE + "." + ground);
+                    }
                     props.put("WorldStaticModel", MODULE + "." + ground);
                     models.append('\n').append(model);
                     groundCount++;
@@ -169,6 +188,7 @@ public final class Main {
         }
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
+        itemModels.writeGuidTable(media);
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         StringBuilder names = new StringBuilder("{\n");
@@ -187,7 +207,7 @@ public final class Main {
         Files.writeString(media.resolve("scripts/gielinor_items.txt"), script, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("lua/shared/Translate/EN/ItemName.json"), names, StandardCharsets.UTF_8);
 
-        System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out), " + modelCount + " weapon models, " + groundCount + " ground models");
+        System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out), " + modelCount + " weapon models, " + groundCount + " ground models, " + wornCount + " wearables");
         counts.forEach((role, n) -> System.out.println("  " + role.name().toLowerCase() + ": " + n));
     }
 

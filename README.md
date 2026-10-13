@@ -56,6 +56,11 @@ The builder reads the cache with RuneLite's open-source cache library.
   weapon each copies so they sit in the hand the same way; everything else
   lies on the ground (and shows in hand) as its own model. Faces keep the
   game's flat colours.
+- Clothing and armour: every wearable item (helmets, capes, amulets, body
+  armour, legs, gloves, boots, rings) is Zomboid clothing, its worn model
+  fitted onto Zomboid's skeleton so it moves with the character. Armour
+  protects against bites and scratches by its defence bonuses (a rune
+  platebody about 57 out of 100).
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

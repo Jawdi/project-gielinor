@@ -74,8 +74,36 @@ final class ModelExporter {
         return loader.load(id, archive.decompress(store.getStorage().loadArchive(archive)));
     }
 
+    /** The default male player's body (identity kits 18 torso, 26 arms, 33 hands, 36 legs, 42 feet), in game units. */
+    List<double[]> defaultBody() throws IOException {
+        Index configs = store.getIndex(IndexType.CONFIGS);
+        Archive kits = configs.getArchive(ConfigType.IDENTKIT.getId());
+        ArchiveFiles files = kits.getFiles(store.getStorage().loadArchive(kits));
+        List<double[]> out = new ArrayList<>();
+        for (int k : new int[]{18, 26, 33, 36, 42}) {
+            KitDefinition kit = new KitLoader().load(k, files.findFile(k).getContents());
+            for (int id : kit.models) {
+                ModelDefinition model = load(id);
+                for (int i = 0; i < model.vertexCount; i++) {
+                    out.add(new double[]{model.vertexX[i], model.vertexY[i], model.vertexZ[i]});
+                }
+            }
+        }
+        return out;
+    }
+
     /** A game model as a mesh in Zomboid's orientation (y up) and scale, recoloured as the item asks. */
     Mesh mesh(ModelDefinition model, ItemDefinition item) {
+        Mesh mesh = rawMesh(model, item);
+        for (int i = 0; i < mesh.vertices.size(); i++) {
+            double[] p = mesh.vertices.get(i);
+            mesh.vertices.set(i, new double[]{p[0] * SCALE, -p[1] * SCALE, p[2] * SCALE});
+        }
+        return mesh;
+    }
+
+    /** A game model as a mesh in the game's own units (y down), recoloured as the item asks. */
+    Mesh rawMesh(ModelDefinition model, ItemDefinition item) {
         if (item != null) {
             if (item.colorFind != null) {
                 for (int i = 0; i < item.colorFind.length; i++) {
@@ -90,7 +118,7 @@ final class ModelExporter {
         }
         Mesh mesh = new Mesh();
         for (int i = 0; i < model.vertexCount; i++) {
-            mesh.vertices.add(new double[]{model.vertexX[i] * SCALE, -model.vertexY[i] * SCALE, model.vertexZ[i] * SCALE});
+            mesh.vertices.add(new double[]{model.vertexX[i], model.vertexY[i], model.vertexZ[i]});
         }
         for (int i = 0; i < model.faceCount; i++) {
             boolean seeThrough = model.faceTransparencies != null && (model.faceTransparencies[i] & 0xff) >= 250;

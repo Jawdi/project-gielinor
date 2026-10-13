@@ -33,9 +33,16 @@ final class BodyFit {
     private static final double INFLATE = 1.06;
     private static final double BAND = 0.05;
 
-    /** A vertex bound to a bone. */
-    record Bound(double[] position, String bone) {
+    /**
+     * A vertex bound to a bone, and near a joint also partly to the bone on
+     * the joint's other side (`second`, weighted `secondWeight`, at most a
+     * half), so the joint bends smoothly instead of opening a seam.
+     */
+    record Bound(double[] position, String bone, String second, double secondWeight) {
     }
+
+    /** How far either side of a joint vertices are shared between its two bones. */
+    private static final double BLEND = 0.03;
 
     /**
      * How a model stands: the height of its crown, and its arms as a unit
@@ -240,23 +247,45 @@ final class BodyFit {
             double zz = sample(zombieDepthMiddle, zy);
             p = new double[]{x * ModelExporter.SCALE * w * INFLATE, zy, zz + (z * ModelExporter.SCALE - gz) * d * INFLATE};
         }
-        return new Bound(p, nearest(p, arm));
+        return bind(p, arm);
     }
 
-    private String nearest(double[] p, boolean arm) {
-        String best = null;
+    /** Binds a point to its nearest bone, and blends in the next nearest if they meet at a joint close by. */
+    private Bound bind(double[] p, boolean arm) {
+        Segment best = null;
+        Segment next = null;
         double bestDistance = Double.MAX_VALUE;
+        double nextDistance = Double.MAX_VALUE;
         for (Segment s : segments) {
             if (s.arm != arm) {
                 continue;
             }
             double d = distance(p, s.a, s.b);
             if (d < bestDistance) {
+                next = best;
+                nextDistance = bestDistance;
+                best = s;
                 bestDistance = d;
-                best = s.bone;
+            } else if (d < nextDistance) {
+                next = s;
+                nextDistance = d;
             }
         }
-        return best;
+        if (next == null || !joined(best, next)) {
+            return new Bound(p, best.bone, null, 0);
+        }
+        double weight = Math.max(0, Math.min(0.5, 0.5 - (nextDistance - bestDistance) / (2 * BLEND)));
+        return weight > 0 ? new Bound(p, best.bone, next.bone, weight) : new Bound(p, best.bone, null, 0);
+    }
+
+    /** Whether two bones meet at a joint: one ends where the other starts. */
+    private static boolean joined(Segment s, Segment t) {
+        return close(s.a, t.b) || close(s.b, t.a);
+    }
+
+    private static boolean close(double[] a, double[] b) {
+        double[] d = ModelExporter.sub(a, b);
+        return ModelExporter.dot(d, d) < 1e-8;
     }
 
     /** A height on the game's player as a height on Zomboid's T-pose. */

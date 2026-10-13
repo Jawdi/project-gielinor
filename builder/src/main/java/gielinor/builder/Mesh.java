@@ -90,11 +90,11 @@ final class Mesh {
      * first, then the mesh with one `SkinWeights` block per bone used.
      * `bones` names the bone each vertex is bound to.
      */
-    void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, String[] bones) throws IOException {
-        writeX(file, name, texture, palette, skeleton, bones);
+    void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, BodyFit.Bound[] bounds) throws IOException {
+        writeX(file, name, texture, palette, skeleton, bounds);
     }
 
-    private void writeX(Path file, String name, String texture, Palette palette, Skeleton skeleton, String[] bones) throws IOException {
+    private void writeX(Path file, String name, String texture, Palette palette, Skeleton skeleton, BodyFit.Bound[] bounds) throws IOException {
         StringBuilder out = new StringBuilder(skeleton == null ? "xof 0303txt 0032\n\n" : skeleton.header);
         out.append("Material Gielinor {\n 1.000000;1.000000;1.000000;1.000000;;\n 0.000000;\n 0.000000;0.000000;0.000000;;\n 0.000000;0.000000;0.000000;;\n");
         out.append(" TextureFilename {\n  \"").append(texture).append("\";\n }\n}\n\n");
@@ -135,31 +135,40 @@ final class Mesh {
         }
         out.append("  }\n");
         if (skeleton != null) {
-            appendSkin(out, skeleton, bones);
+            appendSkin(out, skeleton, bounds);
         }
         out.append(" }\n}\n");
         Files.writeString(file, out, StandardCharsets.ISO_8859_1);
     }
 
     /** The skin: which bone each written vertex follows, one block a bone, with full weight. */
-    private void appendSkin(StringBuilder out, Skeleton skeleton, String[] bones) {
+    private void appendSkin(StringBuilder out, Skeleton skeleton, BodyFit.Bound[] bounds) {
         // Vertices are written three a face, so face i's corners are 3i to 3i+2.
+        // Each follows its bone, and near a joint partly the bone across it.
         java.util.Map<String, List<Integer>> byBone = new java.util.LinkedHashMap<>();
+        java.util.Map<String, List<Double>> weights = new java.util.LinkedHashMap<>();
         for (int i = 0; i < faces.size(); i++) {
             int[] face = faces.get(i);
             for (int k = 0; k < 3; k++) {
-                byBone.computeIfAbsent(bones[face[k]], b -> new ArrayList<>()).add(i * 3 + k);
+                BodyFit.Bound b = bounds[face[k]];
+                byBone.computeIfAbsent(b.bone(), x -> new ArrayList<>()).add(i * 3 + k);
+                weights.computeIfAbsent(b.bone(), x -> new ArrayList<>()).add(1 - b.secondWeight());
+                if (b.second() != null) {
+                    byBone.computeIfAbsent(b.second(), x -> new ArrayList<>()).add(i * 3 + k);
+                    weights.computeIfAbsent(b.second(), x -> new ArrayList<>()).add(b.secondWeight());
+                }
             }
         }
-        out.append("\n  XSkinMeshHeader {\n   1;\n   3;\n   ").append(byBone.size()).append(";\n  }\n");
+        out.append("\n  XSkinMeshHeader {\n   2;\n   6;\n   ").append(byBone.size()).append(";\n  }\n");
         for (java.util.Map.Entry<String, List<Integer>> e : byBone.entrySet()) {
             List<Integer> idx = e.getValue();
+            List<Double> w = weights.get(e.getKey());
             out.append("\n  SkinWeights {\n   \"").append(e.getKey()).append("\";\n   ").append(idx.size()).append(";\n");
             for (int i = 0; i < idx.size(); i++) {
                 out.append("   ").append(idx.get(i)).append(i + 1 < idx.size() ? ",\n" : ";\n");
             }
             for (int i = 0; i < idx.size(); i++) {
-                out.append("   1.000000").append(i + 1 < idx.size() ? ",\n" : ";\n");
+                out.append("   ").append(f(w.get(i))).append(i + 1 < idx.size() ? ",\n" : ";\n");
             }
             double[] m = skeleton.offsets.get(e.getKey());
             out.append("   ");

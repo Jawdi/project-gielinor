@@ -55,8 +55,8 @@ final class ItemModels {
         if (mesh.faces.isEmpty()) {
             return false;
         }
-        String[] bones = fitted(mesh, BodyFit.Pose.PLAYER, slot != ItemConverter.Slot.CAPE);
-        writeClothing("Gielinor_" + type, mesh, bones, masks(slot, bones), media);
+        BodyFit.Bound[] bounds = fitted(mesh, BodyFit.Pose.PLAYER, slot != ItemConverter.Slot.CAPE);
+        writeClothing("Gielinor_" + type, mesh, bounds, masks(slot, bounds), media);
         return true;
     }
 
@@ -71,8 +71,8 @@ final class ItemModels {
         if (mesh.faces.isEmpty()) {
             return false;
         }
-        String[] bones = fitted(mesh, BodyFit.Pose.of(mesh.vertices), true);
-        writeClothing(name, mesh, bones, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), media);
+        BodyFit.Bound[] bounds = fitted(mesh, BodyFit.Pose.of(mesh.vertices), true);
+        writeClothing(name, mesh, bounds, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), media);
         return true;
     }
 
@@ -111,19 +111,19 @@ final class ItemModels {
         return mesh;
     }
 
-    /** Fits every vertex onto the T-pose, winds faces Zomboid's way, and returns each vertex's bone. */
-    private String[] fitted(Mesh mesh, BodyFit.Pose pose, boolean armsAllowed) {
-        String[] bones = new String[mesh.vertices.size()];
+    /** Fits every vertex onto the T-pose, winds faces Zomboid's way, and returns how each vertex is bound. */
+    private BodyFit.Bound[] fitted(Mesh mesh, BodyFit.Pose pose, boolean armsAllowed) {
+        BodyFit.Bound[] bounds = new BodyFit.Bound[mesh.vertices.size()];
         for (int i = 0; i < mesh.vertices.size(); i++) {
             double[] v = mesh.vertices.get(i);
             BodyFit.Bound bound = fit.fit(v[0], v[1], v[2], pose, armsAllowed);
             mesh.vertices.set(i, bound.position());
-            bones[i] = bound.bone();
+            bounds[i] = bound;
         }
         if (mesh.outwardVote() >= 0 != outward) {
             mesh.flipWinding();
         }
-        return bones;
+        return bounds;
     }
 
     /**
@@ -132,8 +132,11 @@ final class ItemModels {
      * and 9 the legs, 8 and 10 the feet), so the body doesn't show through
      * it. A part is hidden only if the piece really covers it.
      */
-    private static java.util.List<Integer> masks(ItemConverter.Slot slot, String[] bones) {
-        java.util.Set<String> used = new java.util.HashSet<>(java.util.Arrays.asList(bones));
+    private static java.util.List<Integer> masks(ItemConverter.Slot slot, BodyFit.Bound[] bounds) {
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (BodyFit.Bound b : bounds) {
+            used.add(b.bone());
+        }
         java.util.List<Integer> out = new java.util.ArrayList<>();
         switch (slot) {
             case BODY -> {
@@ -181,14 +184,14 @@ final class ItemModels {
     }
 
     /** Writes a skinned clothing piece: its mesh, palette and clothing definition. */
-    private void writeClothing(String name, Mesh mesh, String[] bones, java.util.List<Integer> masks, Path media) throws IOException {
+    private void writeClothing(String name, Mesh mesh, BodyFit.Bound[] bounds, java.util.List<Integer> masks, Path media) throws IOException {
         Palette palette = new Palette();
         mesh.colours.forEach(palette::add);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Path textureDir = media.resolve("textures/Clothes/Gielinor");
         Files.createDirectories(meshDir);
         Files.createDirectories(textureDir);
-        mesh.writeSkinnedX(meshDir.resolve(name + ".X"), name, name + ".png", palette, skeleton, bones);
+        mesh.writeSkinnedX(meshDir.resolve(name + ".X"), name, name + ".png", palette, skeleton, bounds);
         palette.write(textureDir.resolve(name + ".png"));
 
         String guid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();

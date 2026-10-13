@@ -23,6 +23,38 @@ RuneScape installation:
 - Old School RuneScape installed and run at least once, so its cache is on
   your machine.
 
+## Building the content pack
+
+The builder needs Java 21 and Gradle. From `builder/`:
+
+```
+gradle run
+```
+
+It finds the game cache of an installed Old School RuneScape (RuneLite's or
+the official client's) and Project Zomboid on its own, and writes the pack to
+`Zomboid/mods/ProjectGielinorContent`. To point it somewhere else:
+
+```
+gradle run --args="--cache <cache folder> --zomboid <install folder> --out <pack folder>"
+```
+
+The builder reads the cache with RuneLite's open-source cache library.
+
+## What's in it so far
+
+- Items: every item in the game (bar noted, placeholder and duplicate
+  copies), about 12,000, with icons rendered from the game's own models,
+  names and weights. Each copies the vanilla Zomboid item that plays the same
+  part for its animations, sounds and held model: axes chop trees like
+  Zomboid's hatchet, with tree damage scaled from their strength bonus
+  (bronze 12, dragon 37, against the hatchet's 15); swords, daggers, maces,
+  spears, staves and two-handers fight like their Zomboid counterparts, with
+  damage scaled the same way. Food and drink can be eaten. Everything else is
+  carried, with no use yet.
+- New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
+  lobster and a jug of wine.
+
 ## Status
 
 Early development. Nothing is released yet.

@@ -1,0 +1,27 @@
+plugins {
+    id 'application'
+}
+
+group = 'gielinor'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    // RuneLite's cache library, which reads the game cache.
+    maven { url = 'https://repo.runelite.net' }
+}
+
+dependencies {
+    implementation 'net.runelite:cache:1.13.1'
+}
+
+application {
+    mainClass = 'gielinor.builder.Main'
+}
+

@@ -112,41 +112,66 @@ public final class Main {
         return out;
     }
 
-    /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
     /**
-     * Every distinct zombie in the game as a full-body clothing piece, each
-     * its own zombie outfit (`GielinorZombie_<npc id>`) for the mod to put
+     * Humanoid monsters that walk among the undead: fitted to a human's size
+     * like the zombies, and mixed in less often. Only human-shaped ones: giants
+     * and ogres are built too broad to move on a human skeleton.
+     */
+    private static final Set<String> MOBS = Set.of(
+        "goblin", "hobgoblin", "skeleton", "guard", "barbarian", "dark wizard", "thug", "mugger",
+        "highwayman", "pirate", "monk of zamorak", "black knight", "white knight", "warrior woman",
+        "al-kharid warrior", "ghoul", "werewolf");
+    /** How many looks of each monster to take (many have dozens of near-identical recolours). */
+    private static final int LOOKS_PER_MOB = 3;
+
+    /**
+     * Every distinct zombie in the game, and the humanoid monsters in
+     * {@link #MOBS}, as full-body clothing pieces, each its own outfit
+     * (`GielinorZombie_<npc id>` and `GielinorMob_<npc id>`) for the mod to put
      * among Zomboid's zombies. Returns the outfits' `clothing.xml`.
      */
-    private static String zombies(NpcManager npcs, ItemModels itemModels, Path media) throws IOException {
+    private static String undead(NpcManager npcs, ItemModels itemModels, Path media) throws IOException {
         List<NpcDefinition> all = new ArrayList<>(npcs.getNpcs());
         all.sort(Comparator.comparingInt(n -> n.id));
         Set<String> seen = new HashSet<>();
+        Map<String, Integer> perMob = new java.util.HashMap<>();
         StringBuilder male = new StringBuilder();
         StringBuilder female = new StringBuilder();
-        int count = 0;
+        int zombies = 0;
+        int mobs = 0;
         for (NpcDefinition n : all) {
-            if (n.name == null || !n.name.toLowerCase().contains("zombie") || n.models == null || n.models.length == 0) {
+            if (n.name == null || n.models == null || n.models.length == 0) {
+                continue;
+            }
+            String lower = n.name.toLowerCase();
+            boolean zombie = lower.contains("zombie");
+            if (!zombie && (!MOBS.contains(lower) || perMob.getOrDefault(lower, 0) >= LOOKS_PER_MOB)) {
                 continue;
             }
             String look = java.util.Arrays.toString(n.models) + java.util.Arrays.toString(n.recolorToReplace);
             if (!seen.add(look)) {
                 continue;
             }
-            String name = "Gielinor_Zombie_" + n.id;
+            String kind = zombie ? "Zombie" : "Mob";
+            String name = "Gielinor_" + kind + "_" + n.id;
             if (!itemModels.exportFigure(name, n.models, n.recolorToFind, n.recolorToReplace, media)) {
                 continue;
             }
             String guid = itemModels.guidOf(name);
             String outfitGuid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:outfit:" + name).getBytes(StandardCharsets.UTF_8)).toString();
-            String outfit = "\t\t<m_Name>GielinorZombie_" + n.id + "</m_Name>\r\n\t\t<m_Guid>" + outfitGuid + "</m_Guid>\r\n"
+            String outfit = "\t\t<m_Name>Gielinor" + kind + "_" + n.id + "</m_Name>\r\n\t\t<m_Guid>" + outfitGuid + "</m_Guid>\r\n"
                 + "\t\t<m_Top>false</m_Top>\r\n\t\t<m_Pants>false</m_Pants>\r\n"
                 + "\t\t<m_items>\r\n\t\t\t<itemGUID>" + guid + "</itemGUID>\r\n\t\t</m_items>\r\n";
             male.append("\t<m_MaleOutfits>\r\n").append(outfit).append("\t</m_MaleOutfits>\r\n");
             female.append("\t<m_FemaleOutfits>\r\n").append(outfit).append("\t</m_FemaleOutfits>\r\n");
-            count++;
+            if (zombie) {
+                zombies++;
+            } else {
+                perMob.merge(lower, 1, Integer::sum);
+                mobs++;
+            }
         }
-        System.out.println("  zombie looks: " + count);
+        System.out.println("  zombie looks: " + zombies + ", monster looks: " + mobs);
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<outfitManager>\r\n" + female + male + "</outfitManager>\r\n";
     }
 
@@ -245,6 +270,7 @@ public final class Main {
         return script.append("}\n").toString();
     }
 
+    /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
     private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels, NpcManager npcs,
             ZomboidItems.Scripts scripts, File zomboid) throws IOException {
         Path b42 = out.resolve("42");
@@ -325,7 +351,7 @@ public final class Main {
         }
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
-        Files.writeString(media.resolve("clothing/clothing.xml"), zombies(npcs, itemModels, media), StandardCharsets.UTF_8);
+        Files.writeString(media.resolve("clothing/clothing.xml"), undead(npcs, itemModels, media), StandardCharsets.UTF_8);
         Files.writeString(media.resolve("scripts/gielinor_bodies.txt"), bodies(itemModels, media), StandardCharsets.UTF_8);
         Files.writeString(media.resolve("scripts/gielinor_animals.txt"), animals(npcs, itemModels, scripts, zomboid, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);

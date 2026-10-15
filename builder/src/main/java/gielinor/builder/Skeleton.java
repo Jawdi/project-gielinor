@@ -108,6 +108,21 @@ final class Skeleton {
         return skeleton;
     }
 
+    /** The bone moving a triangle most, summed over its corners. */
+    String mainBone(int[] face) {
+        Map<String, Double> sum = new java.util.HashMap<>();
+        for (int corner : face) {
+            bodyWeights.get(corner).forEach((bone, w) -> sum.merge(bone, w, Double::sum));
+        }
+        String best = null;
+        for (Map.Entry<String, Double> e : sum.entrySet()) {
+            if (best == null || e.getValue() > sum.get(best)) {
+                best = e.getKey();
+            }
+        }
+        return best == null ? "" : best;
+    }
+
     /** The index just past the block whose first brace follows `start`. */
     private static int blockEnd(String text, int start) {
         int depth = 0;

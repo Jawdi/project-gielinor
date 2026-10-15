@@ -30,7 +30,7 @@ final class AnimalFit {
     }
 
     /** Fits a model's vertices (game units, y down) and binds them. */
-    BodyFit.Bound[] fit(List<double[]> vertices) {
+    Bound[] fit(List<double[]> vertices) {
         double[] lo = {Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE};
         double[] hi = {-Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE};
         List<double[]> up = new ArrayList<>();
@@ -42,7 +42,7 @@ final class AnimalFit {
                 hi[k] = Math.max(hi[k], p[k]);
             }
         }
-        BodyFit.Bound[] out = new BodyFit.Bound[up.size()];
+        Bound[] out = new Bound[up.size()];
         for (int i = 0; i < up.size(); i++) {
             double[] p = new double[3];
             for (int k = 0; k < 3; k++) {

@@ -1,3 +1,5 @@
--- Read before item scripts are: the slot a character's Gielinor body is worn
--- in, beneath all other clothing.
-ItemBodyLocation.register("gielinor:body")
+-- Read before item scripts are: the slots a character's Gielinor body is worn
+-- in, part by part, beneath all other clothing.
+for _, part in ipairs({"head", "torso", "arms", "hands", "legs", "feet"}) do
+    ItemBodyLocation.register("gielinor:" .. part)
+end

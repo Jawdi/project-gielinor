@@ -83,9 +83,8 @@ final class Mesh {
     }
 
     /**
-     * Writes the mesh as a text `.X` file. Every face gets its own three
-     * vertices so it can carry a flat normal and point at its colour's cell
-     * in the palette texture `texture`.
+     * Writes the mesh as a text `.X` file, each face flat shaded and pointing
+     * at its colour's cell in the palette texture `texture`.
      */
     void writeX(Path file, String name, String texture, Palette palette) throws IOException {
         writeX(file, name, texture, palette, null, null);
@@ -96,28 +95,46 @@ final class Mesh {
      * first, then the mesh with one `SkinWeights` block per bone used.
      * `bones` names the bone each vertex is bound to.
      */
-    void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, BodyFit.Bound[] bounds) throws IOException {
+    void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, Bound[] bounds) throws IOException {
         writeX(file, name, texture, palette, skeleton, bounds);
     }
 
-    private void writeX(Path file, String name, String texture, Palette palette, Skeleton skeleton, BodyFit.Bound[] bounds) throws IOException {
+    private void writeX(Path file, String name, String texture, Palette palette, Skeleton skeleton, Bound[] bounds) throws IOException {
+        // Faces sharing a corner and a colour share the written vertex; each
+        // face still gets its own flat normal through the normal list.
+        java.util.Map<Long, Integer> written = new java.util.HashMap<>();
+        List<int[]> corners = new ArrayList<>();
+        List<Integer> sources = new ArrayList<>();
+        List<Integer> sourceColours = new ArrayList<>();
+        for (int i = 0; i < faces.size(); i++) {
+            int[] face = faces.get(i);
+            int[] c = new int[3];
+            for (int k = 0; k < 3; k++) {
+                int vertex = face[k];
+                int colour = colours.get(i) & 0xffffff;
+                c[k] = written.computeIfAbsent((long) vertex << 24 | colour, key -> {
+                    sources.add(vertex);
+                    sourceColours.add(colour);
+                    return sources.size() - 1;
+                });
+            }
+            corners.add(c);
+        }
+        int n = faces.size();
+        int count = sources.size();
         StringBuilder out = new StringBuilder(skeleton == null ? "xof 0303txt 0032\n\n" : skeleton.header);
         out.append("Material Gielinor {\n 1.000000;1.000000;1.000000;1.000000;;\n 0.000000;\n 0.000000;0.000000;0.000000;;\n 0.000000;0.000000;0.000000;;\n");
         out.append(" TextureFilename {\n  \"").append(texture).append("\";\n }\n}\n\n");
         out.append("Frame ").append(name).append(" {\n FrameTransformMatrix {\n  1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000;;\n }\n\n");
-        int n = faces.size();
-        out.append(" Mesh ").append(name).append(" {\n  ").append(n * 3).append(";\n");
-        for (int i = 0; i < n; i++) {
-            int[] face = faces.get(i);
-            for (int k = 0; k < 3; k++) {
-                double[] p = vertices.get(face[k]);
-                out.append("  ").append(f(p[0])).append(';').append(f(p[1])).append(';').append(f(p[2])).append(';')
-                    .append(i == n - 1 && k == 2 ? ";\n" : ",\n");
-            }
+        out.append(" Mesh ").append(name).append(" {\n  ").append(count).append(";\n");
+        for (int i = 0; i < count; i++) {
+            double[] p = vertices.get(sources.get(i));
+            out.append("  ").append(f(p[0])).append(';').append(f(p[1])).append(';').append(f(p[2])).append(i == count - 1 ? ";;\n" : ";,\n");
         }
         out.append("  ").append(n).append(";\n");
         for (int i = 0; i < n; i++) {
-            out.append("  3;").append(i * 3).append(',').append(i * 3 + 1).append(',').append(i * 3 + 2).append(i == n - 1 ? ";;\n" : ";,\n");
+            int[] c = corners.get(i);
+            out.append("  3;").append(c[0]).append(',').append(c[1]).append(',').append(c[2]).append(i == n - 1 ? ";;\n" : ";,\n");
         }
         out.append("\n  MeshNormals {\n   ").append(n).append(";\n");
         for (int i = 0; i < n; i++) {
@@ -132,36 +149,33 @@ final class Mesh {
         for (int i = 0; i < n; i++) {
             out.append("   0").append(i == n - 1 ? ";\n" : ",\n");
         }
-        out.append("   { Gielinor }\n  }\n\n  MeshTextureCoords {\n   ").append(n * 3).append(";\n");
-        for (int i = 0; i < n; i++) {
-            double[] uv = palette.uv(colours.get(i));
-            for (int k = 0; k < 3; k++) {
-                out.append("   ").append(f(uv[0])).append(';').append(f(uv[1])).append(';').append(i == n - 1 && k == 2 ? ";\n" : ",\n");
-            }
+        out.append("   { Gielinor }\n  }\n\n  MeshTextureCoords {\n   ").append(count).append(";\n");
+        for (int i = 0; i < count; i++) {
+            double[] uv = palette.uv(sourceColours.get(i));
+            out.append("   ").append(f(uv[0])).append(';').append(f(uv[1])).append(i == count - 1 ? ";;\n" : ";,\n");
         }
         out.append("  }\n");
         if (skeleton != null) {
-            appendSkin(out, skeleton, bounds);
+            appendSkin(out, skeleton, bounds, sources);
         }
         out.append(" }\n}\n");
         Files.writeString(file, out, StandardCharsets.ISO_8859_1);
     }
 
-    /** The skin: one block a bone, listing the written vertices it moves and how strongly. */
-    private void appendSkin(StringBuilder out, Skeleton skeleton, BodyFit.Bound[] bounds) {
-        // Vertices are written three a face, so face i's corners are 3i to 3i+2.
+    /**
+     * The skin: one block a bone, listing the written vertices it moves and
+     * how strongly. `sources` gives each written vertex's own vertex.
+     */
+    private void appendSkin(StringBuilder out, Skeleton skeleton, Bound[] bounds, List<Integer> sources) {
         java.util.Map<String, List<Integer>> byBone = new java.util.LinkedHashMap<>();
         java.util.Map<String, List<Double>> weights = new java.util.LinkedHashMap<>();
         int most = 1;
-        for (int i = 0; i < faces.size(); i++) {
-            int[] face = faces.get(i);
-            for (int k = 0; k < 3; k++) {
-                BodyFit.Bound b = bounds[face[k]];
-                most = Math.max(most, b.bones().length);
-                for (int j = 0; j < b.bones().length; j++) {
-                    byBone.computeIfAbsent(b.bones()[j], x -> new ArrayList<>()).add(i * 3 + k);
-                    weights.computeIfAbsent(b.bones()[j], x -> new ArrayList<>()).add(b.weights()[j]);
-                }
+        for (int i = 0; i < sources.size(); i++) {
+            Bound b = bounds[sources.get(i)];
+            most = Math.max(most, b.bones().length);
+            for (int j = 0; j < b.bones().length; j++) {
+                byBone.computeIfAbsent(b.bones()[j], x -> new ArrayList<>()).add(i);
+                weights.computeIfAbsent(b.bones()[j], x -> new ArrayList<>()).add(b.weights()[j]);
             }
         }
         out.append("\n  XSkinMeshHeader {\n   ").append(most).append(";\n   ").append(most * 3).append(";\n   ").append(byBone.size()).append(";\n  }\n");

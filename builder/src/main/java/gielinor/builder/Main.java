@@ -156,7 +156,7 @@ public final class Main {
             }
             String kind = zombie ? "Zombie" : "Mob";
             String name = "Gielinor_" + kind + "_" + n.id;
-            if (!itemModels.exportFigure(name, n.models, n.recolorToFind, n.recolorToReplace, media)) {
+            if (!itemModels.exportFigure(name, n.models, n.recolorToFind, n.recolorToReplace, true, media)) {
                 continue;
             }
             String guid = itemModels.guidOf(name);
@@ -257,32 +257,60 @@ public final class Main {
     }
 
     /**
-     * The player's own body, male and female, from the game's default look
-     * (identity kits: male hair 0, jaw 10, torso 18, arms 26, hands 33, legs
-     * 36, feet 42; female hair 45, torso 56, arms 61, hands 67, legs 70, feet
-     * 79), as items worn in the mod's own `gielinor:body` slot under all
-     * other clothing. Returns their script.
+     * The parts of a Gielinor body, as the game builds the player from
+     * identity kits: each part's slot (`gielinor:<part>`), its male and female
+     * kits, and the parts of Zomboid's body it hides. Separate parts let
+     * clothing replace them as the game's equipment does: a platebody hides
+     * the torso and arms, platelegs the legs.
+     */
+    private static final String[][] BODY_PARTS = {
+        {"head", "0,10", "45", "0"},
+        {"torso", "18", "56", "1"},
+        {"arms", "26", "61", "3,5"},
+        {"hands", "33", "67", "4,6"},
+        {"legs", "36", "70", "2,7,9"},
+        {"feet", "42", "79", "8,10"},
+    };
+
+    /**
+     * The player's body, part by part (see {@link #BODY_PARTS}), as clothing
+     * items `GielinorBody<Male|Female>_<part>` for the mod to dress new
+     * characters in. Returns their item script.
      */
     private static String bodies(ItemModels itemModels, Path media) throws IOException {
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
-        String[][] looks = {{"Male", "0,10,18,26,33,36,42"}, {"Female", "45,56,61,67,70,79"}};
-        for (String[] look : looks) {
-            int[] kits = java.util.Arrays.stream(look[1].split(",")).mapToInt(Integer::parseInt).toArray();
-            String name = "Gielinor_Body_" + look[0];
-            if (!itemModels.exportKitBody(name, kits, media)) {
-                continue;
+        for (String sex : new String[]{"Male", "Female"}) {
+            int column = sex.equals("Male") ? 1 : 2;
+            List<Integer> all = new ArrayList<>();
+            for (String[] part : BODY_PARTS) {
+                all.addAll(numbers(part[column]));
             }
-            script.append("\n    item GielinorBody").append(look[0]).append("\n    {\n")
-                .append("        DisplayCategory = Clothing,\n")
-                .append("        ItemType = base:clothing,\n")
-                .append("        DisplayName = Gielinor body (").append(look[0].toLowerCase()).append("),\n")
-                .append("        Icon = TshirtGeneric,\n")
-                .append("        Weight = 0.01,\n")
-                .append("        BodyLocation = gielinor:body,\n")
-                .append("        ClothingItem = ").append(name).append(",\n")
-                .append("    }\n");
+            double crown = itemModels.kitCrown(all);
+            for (String[] part : BODY_PARTS) {
+                String name = "Gielinor_Body_" + sex + "_" + part[0];
+                if (!itemModels.exportKitPart(name, numbers(part[column]), crown, numbers(part[3]), media)) {
+                    continue;
+                }
+                script.append("\n    item GielinorBody").append(sex).append('_').append(part[0]).append("\n    {\n")
+                    .append("        DisplayCategory = Clothing,\n")
+                    .append("        ItemType = base:clothing,\n")
+                    .append("        DisplayName = Gielinor ").append(part[0]).append(" (").append(sex.toLowerCase()).append("),\n")
+                    .append("        Icon = TshirtGeneric,\n")
+                    .append("        Weight = 0.01,\n")
+                    .append("        BodyLocation = gielinor:").append(part[0]).append(",\n")
+                    .append("        ClothingItem = ").append(name).append(",\n")
+                    .append("    }\n");
+            }
         }
         return script.append("}\n").toString();
+    }
+
+    private static List<Integer> numbers(String list) {
+        List<Integer> out = new ArrayList<>();
+        for (String n : list.split(",")) {
+            out.add(Integer.parseInt(n.trim()));
+        }
+        return out;
     }
 
     /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */

@@ -30,7 +30,7 @@ final class ItemModels {
     /** Whether Zomboid's meshes are wound with normals facing out, measured on a vanilla mesh. */
     private final boolean outward;
     private final Skeleton skeleton;
-    private final BodyFit fit;
+    private final HumanFit fit;
     /** Clothing definitions written so far: their file paths and GUIDs, for `fileGuidTable.xml`. */
     private final Map<String, String> clothingGuids = new java.util.LinkedHashMap<>();
 
@@ -42,12 +42,12 @@ final class ItemModels {
         Mesh reference = templateMesh(scripts.models().get("HandAxe"));
         this.outward = reference == null || reference.outwardVote() >= 0;
         this.skeleton = Skeleton.read(new File(install, "media/models_X/Skinned/MaleBody.x").toPath());
-        this.fit = new BodyFit(skeleton, exporter.defaultBody());
+        this.fit = new HumanFit(skeleton);
     }
 
     /**
-     * Writes a worn item as Zomboid clothing: its worn models fitted onto
-     * Zomboid's T-pose and skinned to its skeleton, a palette texture, and a
+     * Writes a worn item as Zomboid clothing: its worn models put on
+     * Zomboid's skeleton as the player wears them, a palette texture, and a
      * clothing definition. Returns false if it has nothing to show.
      */
     boolean exportWorn(ItemDefinition item, String type, ItemConverter.Slot slot, Path media) throws IOException {
@@ -55,7 +55,7 @@ final class ItemModels {
         if (mesh.faces.isEmpty()) {
             return false;
         }
-        BodyFit.Bound[] bounds = fitted(mesh, BodyFit.Pose.PLAYER, slot != ItemConverter.Slot.CAPE);
+        Bound[] bounds = fitted(mesh, HumanFit.PLAYER_CROWN, false, slot != ItemConverter.Slot.CAPE);
         writeClothing("Gielinor_" + type, mesh, bounds, masks(slot, bounds), media);
         return true;
     }
@@ -63,17 +63,41 @@ final class ItemModels {
     /**
      * Writes a whole creature (a zombie, say) as one skinned clothing piece
      * that hides the body under it entirely: its models merged and recoloured
-     * as its definition says, its pose read from its arms. Returns false if
-     * it has nothing to show.
+     * as its definition says, scaled to a person's height, its arms read from
+     * where it holds them (`findArms`) or taken to hang as the player's do.
+     * Returns false if it has nothing to show.
      */
-    boolean exportFigure(String name, int[] models, short[] recolorFind, short[] recolorReplace, Path media) throws IOException {
+    boolean exportFigure(String name, int[] models, short[] recolorFind, short[] recolorReplace, boolean findArms, Path media) throws IOException {
         Mesh mesh = merged(models, null, recolorFind, recolorReplace);
-        if (mesh.faces.isEmpty()) {
+        if (mesh.faces.isEmpty() || !standsUpright(mesh)) {
             return false;
         }
-        BodyFit.Bound[] bounds = fitted(mesh, BodyFit.Pose.of(mesh.vertices), true);
+        double crown = 0;
+        for (double[] v : mesh.vertices) {
+            crown = Math.max(crown, -v[1]);
+        }
+        Bound[] bounds = fitted(mesh, crown, findArms, true);
         writeClothing(name, mesh, bounds, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), media);
         return true;
+    }
+
+    /**
+     * Whether a creature stands on two legs like a person: much taller than
+     * it is deep from front to back. Some of the game's zombies are rats and
+     * the like, which can't be fitted onto a person.
+     */
+    private static boolean standsUpright(Mesh mesh) {
+        double top = Double.MAX_VALUE;
+        double bottom = -Double.MAX_VALUE;
+        double front = Double.MAX_VALUE;
+        double back = -Double.MAX_VALUE;
+        for (double[] v : mesh.vertices) {
+            top = Math.min(top, v[1]);
+            bottom = Math.max(bottom, v[1]);
+            front = Math.min(front, v[2]);
+            back = Math.max(back, v[2]);
+        }
+        return back - front < 0.7 * (bottom - top);
     }
 
     /**
@@ -88,7 +112,7 @@ final class ItemModels {
             return false;
         }
         Skeleton animal = Skeleton.read(animalMesh);
-        BodyFit.Bound[] bounds = new AnimalFit(animal).fit(mesh.vertices);
+        Bound[] bounds = new AnimalFit(animal).fit(mesh.vertices);
         for (int i = 0; i < bounds.length; i++) {
             mesh.vertices.set(i, bounds[i].position());
         }
@@ -106,15 +130,38 @@ final class ItemModels {
         return true;
     }
 
-    /** Writes the player's own body, made of identity kits (its default look), as a full-body piece. */
-    boolean exportKitBody(String name, int[] kits, Path media) throws IOException {
+    /** How tall the body made of these identity kits stands, in game units. */
+    double kitCrown(java.util.List<Integer> kits) throws IOException {
+        double crown = 0;
+        for (double[] v : merged(kitModels(kits), null, null, null).vertices) {
+            crown = Math.max(crown, -v[1]);
+        }
+        return crown;
+    }
+
+    /**
+     * Writes one part of the player's body (its head, say, or legs), made of
+     * identity kits, as a piece hiding the parts of Zomboid's body in
+     * `masks`. `crown` is the whole body's height, so its parts all scale
+     * alike. Returns false if it has nothing to show.
+     */
+    boolean exportKitPart(String name, java.util.List<Integer> kits, double crown, java.util.List<Integer> masks, Path media) throws IOException {
+        Mesh mesh = merged(kitModels(kits), null, null, null);
+        if (mesh.faces.isEmpty()) {
+            return false;
+        }
+        writeClothing(name, mesh, fitted(mesh, crown, false, true), masks, media);
+        return true;
+    }
+
+    private int[] kitModels(java.util.List<Integer> kits) throws IOException {
         java.util.List<Integer> models = new java.util.ArrayList<>();
         for (int kit : kits) {
             for (int m : exporter.kitModels(kit)) {
                 models.add(m);
             }
         }
-        return exportFigure(name, models.stream().mapToInt(Integer::intValue).toArray(), null, null, media);
+        return models.stream().mapToInt(Integer::intValue).toArray();
     }
 
     /** Models merged into one mesh in game units, recoloured by an item or a creature's definition. */
@@ -142,37 +189,9 @@ final class ItemModels {
         return mesh;
     }
 
-    /**
-     * Fits every vertex onto the T-pose, winds faces Zomboid's way, and
-     * returns how each vertex is bound. Whether a vertex is on an arm is
-     * decided for its whole animation group at once, from the group's middle,
-     * so a part the game moves as one (an upper arm, say) isn't torn between
-     * the arm and the body.
-     */
-    private BodyFit.Bound[] fitted(Mesh mesh, BodyFit.Pose pose, boolean armsAllowed) {
-        boolean grouped = mesh.groups.size() == mesh.vertices.size();
-        java.util.Map<Integer, double[]> middles = new java.util.HashMap<>();
-        if (grouped) {
-            for (int i = 0; i < mesh.vertices.size(); i++) {
-                double[] v = mesh.vertices.get(i);
-                double[] sum = middles.computeIfAbsent(mesh.groups.get(i), g -> new double[4]);
-                sum[0] += Math.abs(v[0]);
-                sum[1] += v[1];
-                sum[2] += v[2];
-                sum[3]++;
-            }
-        }
-        BodyFit.Bound[] bounds = new BodyFit.Bound[mesh.vertices.size()];
-        for (int i = 0; i < mesh.vertices.size(); i++) {
-            double[] v = mesh.vertices.get(i);
-            double[] m = grouped && mesh.groups.get(i) >= 0 ? middles.get(mesh.groups.get(i)) : null;
-            boolean arm = armsAllowed && (m != null
-                ? BodyFit.onArm(m[0] / m[3], m[1] / m[3], m[2] / m[3], pose)
-                : BodyFit.onArm(v[0], v[1], v[2], pose));
-            BodyFit.Bound bound = fit.place(v[0], v[1], v[2], pose, arm);
-            mesh.vertices.set(i, bound.position());
-            bounds[i] = bound;
-        }
+    /** Puts a model on Zomboid's skeleton (see {@link HumanFit#fit}), winds its faces Zomboid's way, and returns how each vertex is bound. */
+    private Bound[] fitted(Mesh mesh, double crown, boolean findArms, boolean armsAllowed) {
+        Bound[] bounds = fit.fit(mesh, crown, findArms, armsAllowed);
         if (mesh.outwardVote() >= 0 != outward) {
             mesh.flipWinding();
         }
@@ -185,9 +204,9 @@ final class ItemModels {
      * and 9 the legs, 8 and 10 the feet), so the body doesn't show through
      * it. A part is hidden only if the piece really covers it.
      */
-    private static java.util.List<Integer> masks(ItemConverter.Slot slot, BodyFit.Bound[] bounds) {
+    private static java.util.List<Integer> masks(ItemConverter.Slot slot, Bound[] bounds) {
         java.util.Set<String> used = new java.util.HashSet<>();
-        for (BodyFit.Bound b : bounds) {
+        for (Bound b : bounds) {
             used.add(b.bone());
         }
         java.util.List<Integer> out = new java.util.ArrayList<>();
@@ -237,7 +256,7 @@ final class ItemModels {
     }
 
     /** Writes a skinned clothing piece: its mesh, palette and clothing definition. */
-    private void writeClothing(String name, Mesh mesh, BodyFit.Bound[] bounds, java.util.List<Integer> masks, Path media) throws IOException {
+    private void writeClothing(String name, Mesh mesh, Bound[] bounds, java.util.List<Integer> masks, Path media) throws IOException {
         Palette palette = new Palette();
         mesh.colours.forEach(palette::add);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");

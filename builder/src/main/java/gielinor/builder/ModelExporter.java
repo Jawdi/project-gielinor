@@ -82,24 +82,6 @@ final class ModelExporter {
         return new KitLoader().load(kit, files.findFile(kit).getContents()).models;
     }
 
-    /** The default male player's body (identity kits 18 torso, 26 arms, 33 hands, 36 legs, 42 feet), in game units. */
-    List<double[]> defaultBody() throws IOException {
-        Index configs = store.getIndex(IndexType.CONFIGS);
-        Archive kits = configs.getArchive(ConfigType.IDENTKIT.getId());
-        ArchiveFiles files = kits.getFiles(store.getStorage().loadArchive(kits));
-        List<double[]> out = new ArrayList<>();
-        for (int k : new int[]{18, 26, 33, 36, 42}) {
-            KitDefinition kit = new KitLoader().load(k, files.findFile(k).getContents());
-            for (int id : kit.models) {
-                ModelDefinition model = load(id);
-                for (int i = 0; i < model.vertexCount; i++) {
-                    out.add(new double[]{model.vertexX[i], model.vertexY[i], model.vertexZ[i]});
-                }
-            }
-        }
-        return out;
-    }
-
     /**
      * Each vertex's animation group. The cache library keeps these only as
      * a private table from group to vertices, built as it loads a model.

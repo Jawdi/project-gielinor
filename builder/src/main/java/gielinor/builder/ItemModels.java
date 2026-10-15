@@ -56,7 +56,7 @@ final class ItemModels {
             return false;
         }
         Bound[] bounds = fitted(mesh, HumanFit.PLAYER_CROWN, false, slot != ItemConverter.Slot.CAPE);
-        writeClothing("Gielinor_" + type, mesh, bounds, masks(slot, bounds), media);
+        writeClothing("Gielinor_" + type, mesh, bounds, masks(slot, bounds), hatCategory(item), media);
         return true;
     }
 
@@ -77,7 +77,7 @@ final class ItemModels {
             crown = Math.max(crown, -v[1]);
         }
         Bound[] bounds = fitted(mesh, crown, findArms, true);
-        writeClothing(name, mesh, bounds, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), media);
+        writeClothing(name, mesh, bounds, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), NO_HAIR_OR_BEARD, media);
         return true;
     }
 
@@ -150,7 +150,7 @@ final class ItemModels {
         if (mesh.faces.isEmpty()) {
             return false;
         }
-        writeClothing(name, mesh, fitted(mesh, crown, false, true), masks, media);
+        writeClothing(name, mesh, fitted(mesh, crown, false, true), masks, masks.contains(0) ? NO_HAIR_OR_BEARD : null, media);
         return true;
     }
 
@@ -255,8 +255,30 @@ final class ItemModels {
         return out;
     }
 
-    /** Writes a skinned clothing piece: its mesh, palette and clothing definition. */
-    private void writeClothing(String name, Mesh mesh, Bound[] bounds, java.util.List<Integer> masks, Path media) throws IOException {
+    /**
+     * Zomboid's hat category for a piece that takes the place of hair and
+     * beard: its character's hair and beard aren't drawn while it's worn.
+     */
+    private static final String NO_HAIR_OR_BEARD = "nohairnobeard";
+    /** The game's equipment slots for the hair and the jaw (the beard). */
+    private static final int HAIR = 8;
+    private static final int JAW = 11;
+
+    /**
+     * The hat category of a worn item: whether it hides its wearer's hair
+     * and beard, as the game's items name the extra body parts they hide.
+     */
+    private static String hatCategory(ItemDefinition item) {
+        boolean hair = item.wearPos2 == HAIR || item.wearPos3 == HAIR;
+        boolean jaw = item.wearPos2 == JAW || item.wearPos3 == JAW;
+        return hair && jaw ? NO_HAIR_OR_BEARD : hair ? "nohair" : jaw ? "nobeard" : null;
+    }
+
+    /**
+     * Writes a skinned clothing piece: its mesh, palette and clothing
+     * definition. `hatCategory` (or null) says whether it hides hair or beard.
+     */
+    private void writeClothing(String name, Mesh mesh, Bound[] bounds, java.util.List<Integer> masks, String hatCategory, Path media) throws IOException {
         Palette palette = new Palette();
         mesh.colours.forEach(palette::add);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
@@ -279,6 +301,9 @@ final class ItemModels {
         xml.append("\t<m_AltMaleModel></m_AltMaleModel>\r\n\t<m_AltFemaleModel></m_AltFemaleModel>\r\n");
         xml.append("\t<m_Static>false</m_Static>\r\n\t<m_AllowRandomHue>false</m_AllowRandomHue>\r\n");
         xml.append("\t<m_AllowRandomTint>false</m_AllowRandomTint>\r\n\t<m_AttachBone></m_AttachBone>\r\n");
+        if (hatCategory != null) {
+            xml.append("\t<m_HatCategory>").append(hatCategory).append("</m_HatCategory>\r\n");
+        }
         for (int mask : masks) {
             xml.append("\t<m_Masks>").append(mask).append("</m_Masks>\r\n");
         }

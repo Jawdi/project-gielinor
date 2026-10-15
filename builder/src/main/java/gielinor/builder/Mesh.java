@@ -20,6 +20,12 @@ final class Mesh {
     final List<int[]> faces = new ArrayList<>();
     /** RGB a face. */
     final List<Integer> colours = new ArrayList<>();
+    /**
+     * The game's animation group of each vertex (-1 for none): the game
+     * moves a group's vertices together, so a group is one part of a body,
+     * such as an upper arm or a shin. Empty for meshes not read from the game.
+     */
+    final List<Integer> groups = new ArrayList<>();
 
     /** Reads the vertices of the first mesh in a text `.X` file (all a template needs). */
     static Mesh readX(Path file) throws IOException {
@@ -141,25 +147,24 @@ final class Mesh {
         Files.writeString(file, out, StandardCharsets.ISO_8859_1);
     }
 
-    /** The skin: which bone each written vertex follows, one block a bone, with full weight. */
+    /** The skin: one block a bone, listing the written vertices it moves and how strongly. */
     private void appendSkin(StringBuilder out, Skeleton skeleton, BodyFit.Bound[] bounds) {
         // Vertices are written three a face, so face i's corners are 3i to 3i+2.
-        // Each follows its bone, and near a joint partly the bone across it.
         java.util.Map<String, List<Integer>> byBone = new java.util.LinkedHashMap<>();
         java.util.Map<String, List<Double>> weights = new java.util.LinkedHashMap<>();
+        int most = 1;
         for (int i = 0; i < faces.size(); i++) {
             int[] face = faces.get(i);
             for (int k = 0; k < 3; k++) {
                 BodyFit.Bound b = bounds[face[k]];
-                byBone.computeIfAbsent(b.bone(), x -> new ArrayList<>()).add(i * 3 + k);
-                weights.computeIfAbsent(b.bone(), x -> new ArrayList<>()).add(1 - b.secondWeight());
-                if (b.second() != null) {
-                    byBone.computeIfAbsent(b.second(), x -> new ArrayList<>()).add(i * 3 + k);
-                    weights.computeIfAbsent(b.second(), x -> new ArrayList<>()).add(b.secondWeight());
+                most = Math.max(most, b.bones().length);
+                for (int j = 0; j < b.bones().length; j++) {
+                    byBone.computeIfAbsent(b.bones()[j], x -> new ArrayList<>()).add(i * 3 + k);
+                    weights.computeIfAbsent(b.bones()[j], x -> new ArrayList<>()).add(b.weights()[j]);
                 }
             }
         }
-        out.append("\n  XSkinMeshHeader {\n   2;\n   6;\n   ").append(byBone.size()).append(";\n  }\n");
+        out.append("\n  XSkinMeshHeader {\n   ").append(most).append(";\n   ").append(most * 3).append(";\n   ").append(byBone.size()).append(";\n  }\n");
         for (java.util.Map.Entry<String, List<Integer>> e : byBone.entrySet()) {
             List<Integer> idx = e.getValue();
             List<Double> w = weights.get(e.getKey());

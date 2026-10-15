@@ -137,16 +137,39 @@ final class ItemModels {
                 mesh.faces.add(new int[]{f[0] + base, f[1] + base, f[2] + base});
             }
             mesh.colours.addAll(part.colours);
+            mesh.groups.addAll(part.groups);
         }
         return mesh;
     }
 
-    /** Fits every vertex onto the T-pose, winds faces Zomboid's way, and returns how each vertex is bound. */
+    /**
+     * Fits every vertex onto the T-pose, winds faces Zomboid's way, and
+     * returns how each vertex is bound. Whether a vertex is on an arm is
+     * decided for its whole animation group at once, from the group's middle,
+     * so a part the game moves as one (an upper arm, say) isn't torn between
+     * the arm and the body.
+     */
     private BodyFit.Bound[] fitted(Mesh mesh, BodyFit.Pose pose, boolean armsAllowed) {
+        boolean grouped = mesh.groups.size() == mesh.vertices.size();
+        java.util.Map<Integer, double[]> middles = new java.util.HashMap<>();
+        if (grouped) {
+            for (int i = 0; i < mesh.vertices.size(); i++) {
+                double[] v = mesh.vertices.get(i);
+                double[] sum = middles.computeIfAbsent(mesh.groups.get(i), g -> new double[4]);
+                sum[0] += Math.abs(v[0]);
+                sum[1] += v[1];
+                sum[2] += v[2];
+                sum[3]++;
+            }
+        }
         BodyFit.Bound[] bounds = new BodyFit.Bound[mesh.vertices.size()];
         for (int i = 0; i < mesh.vertices.size(); i++) {
             double[] v = mesh.vertices.get(i);
-            BodyFit.Bound bound = fit.fit(v[0], v[1], v[2], pose, armsAllowed);
+            double[] m = grouped && mesh.groups.get(i) >= 0 ? middles.get(mesh.groups.get(i)) : null;
+            boolean arm = armsAllowed && (m != null
+                ? BodyFit.onArm(m[0] / m[3], m[1] / m[3], m[2] / m[3], pose)
+                : BodyFit.onArm(v[0], v[1], v[2], pose));
+            BodyFit.Bound bound = fit.place(v[0], v[1], v[2], pose, arm);
             mesh.vertices.set(i, bound.position());
             bounds[i] = bound;
         }

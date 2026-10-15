@@ -128,7 +128,9 @@ public final class Main {
      * Every distinct zombie in the game, and the humanoid monsters in
      * {@link #MOBS}, as full-body clothing pieces, each its own outfit
      * (`GielinorZombie_<npc id>` and `GielinorMob_<npc id>`) for the mod to put
-     * among Zomboid's zombies. Returns the outfits' `clothing.xml`.
+     * among Zomboid's zombies. Returns the outfits' `clothing.xml`, and lists
+     * their names in `lua/shared/Gielinor_Outfits.lua` so the mod knows them
+     * before Zomboid has read its outfits.
      */
     private static String undead(NpcManager npcs, ItemModels itemModels, Path media) throws IOException {
         List<NpcDefinition> all = new ArrayList<>(npcs.getNpcs());
@@ -137,8 +139,8 @@ public final class Main {
         Map<String, Integer> perMob = new java.util.HashMap<>();
         StringBuilder male = new StringBuilder();
         StringBuilder female = new StringBuilder();
-        int zombies = 0;
-        int mobs = 0;
+        List<String> zombieNames = new ArrayList<>();
+        List<String> mobNames = new ArrayList<>();
         for (NpcDefinition n : all) {
             if (n.name == null || n.models == null || n.models.length == 0) {
                 continue;
@@ -165,14 +167,27 @@ public final class Main {
             male.append("\t<m_MaleOutfits>\r\n").append(outfit).append("\t</m_MaleOutfits>\r\n");
             female.append("\t<m_FemaleOutfits>\r\n").append(outfit).append("\t</m_FemaleOutfits>\r\n");
             if (zombie) {
-                zombies++;
+                zombieNames.add("Gielinor" + kind + "_" + n.id);
             } else {
                 perMob.merge(lower, 1, Integer::sum);
-                mobs++;
+                mobNames.add("Gielinor" + kind + "_" + n.id);
             }
         }
-        System.out.println("  zombie looks: " + zombies + ", monster looks: " + mobs);
+        System.out.println("  zombie looks: " + zombieNames.size() + ", monster looks: " + mobNames.size());
+        Path lua = media.resolve("lua/shared/Gielinor_Outfits.lua");
+        Files.createDirectories(lua.getParent());
+        Files.writeString(lua, "-- Written by the Project Gielinor Content Builder: the content pack's zombie\n"
+            + "-- and monster outfits.\n\nGielinorOutfits = {\n    zombies = " + luaList(zombieNames)
+            + ",\n    monsters = " + luaList(mobNames) + ",\n}\n", StandardCharsets.UTF_8);
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<outfitManager>\r\n" + female + male + "</outfitManager>\r\n";
+    }
+
+    private static String luaList(List<String> names) {
+        StringBuilder out = new StringBuilder("{");
+        for (int i = 0; i < names.size(); i++) {
+            out.append(i % 6 == 0 ? "\n        " : " ").append('"').append(names.get(i)).append("\",");
+        }
+        return out.append("\n    }").toString();
     }
 
     /**

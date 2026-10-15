@@ -27,12 +27,20 @@ final class Skeleton {
     final Map<String, double[]> bindPositions = new LinkedHashMap<>();
     /** The body's T-pose vertices, for measuring its shape. */
     final List<double[]> bodyVertices;
+    /** The body's triangles, as indices into {@link #bodyVertices}. */
+    final List<int[]> bodyFaces;
+    /** How strongly each bone moves each body vertex, as the body's own skin has it. */
+    final List<Map<String, Double>> bodyWeights = new ArrayList<>();
     /** Each frame's parent frame, from the frame hierarchy. */
     final Map<String, String> parents = new LinkedHashMap<>();
 
-    private Skeleton(String header, List<double[]> bodyVertices) {
+    private Skeleton(String header, Mesh body) {
         this.header = header;
-        this.bodyVertices = bodyVertices;
+        this.bodyVertices = body.vertices;
+        this.bodyFaces = body.faces;
+        for (int i = 0; i < body.vertices.size(); i++) {
+            bodyWeights.add(new LinkedHashMap<>());
+        }
     }
 
     static Skeleton read(Path maleBody) throws IOException {
@@ -50,7 +58,7 @@ final class Skeleton {
         if (anims.find()) {
             header = header.substring(0, anims.start()) + header.substring(blockEnd(header, anims.start()));
         }
-        Skeleton skeleton = new Skeleton(header, Mesh.readX(maleBody).vertices);
+        Skeleton skeleton = new Skeleton(header, Mesh.readX(maleBody));
         // Frames nest: walk the braces to see which frame each sits in.
         Matcher token = Pattern.compile("Frame\\s+(\\S+)\\s*\\{|\\{|\\}").matcher(skeleton.header);
         List<String> open = new ArrayList<>();
@@ -82,6 +90,12 @@ final class Skeleton {
             List<Double> values = new ArrayList<>();
             while (values.size() < count * 2 + 16 && n.find()) {
                 values.add(Double.parseDouble(n.group()));
+            }
+            for (int i = 0; i < count; i++) {
+                int vertex = (int) Math.round(values.get(i));
+                if (vertex < skeleton.bodyWeights.size()) {
+                    skeleton.bodyWeights.get(vertex).merge(bone, values.get(count + i), Double::sum);
+                }
             }
             double[] offset = new double[16];
             for (int i = 0; i < 16; i++) {

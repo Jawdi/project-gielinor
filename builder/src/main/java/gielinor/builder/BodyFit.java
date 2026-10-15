@@ -1,6 +1,5 @@
 package gielinor.builder;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -9,7 +8,7 @@ import java.util.List;
  * between matching landmarks (ankle, knee, hip, shoulder, crown); arms swing
  * up about the shoulder to lie along the T-pose arm and stretch to its
  * length; widths and depths scale to Zomboid's body as measured at each
- * height. Every vertex is then bound to its nearest bone.
+ * height. Every vertex then takes the bone weights of the body under it.
  *
  * Both games face their models along -z with the right side at -x, so no
  * axis is mirrored.
@@ -31,18 +30,24 @@ final class BodyFit {
     private static final double GAME_FOOT_X = 9;
     /** Clothes sit a little proud of the body so it doesn't show through. */
     private static final double INFLATE = 1.06;
+    /**
+     * How far above the body's surface every point of a worn piece must sit.
+     * The body under a piece is hidden, so wherever the piece dipped inside
+     * it there would be a hole.
+     */
+    private static final double GAP = 0.012;
     private static final double BAND = 0.05;
 
     /**
-     * A vertex bound to a bone, and near a joint also partly to the bone on
-     * the joint's other side (`second`, weighted `secondWeight`, at most a
-     * half), so the joint bends smoothly instead of opening a seam.
+     * A vertex and the bones that move it, strongest first, with weights
+     * summing to one.
      */
-    record Bound(double[] position, String bone, String second, double secondWeight) {
+    record Bound(double[] position, String[] bones, double[] weights) {
+        /** The bone moving the vertex most. */
+        String bone() {
+            return bones[0];
+        }
     }
-
-    /** How far either side of a joint vertices are shared between its two bones. */
-    private static final double BLEND = 0.03;
 
     /**
      * How a model stands: the height of its crown, and its arms as a unit
@@ -112,10 +117,8 @@ final class BodyFit {
         }
     }
 
-    private record Segment(String bone, double[] a, double[] b, boolean arm) {
-    }
-
-    private final List<Segment> segments = new ArrayList<>();
+    private final SkinTransfer armSkin;
+    private final SkinTransfer bodySkin;
     private final double[] widthRatio;
     private final double[] depthRatio;
     private final double[] zombieDepthMiddle;
@@ -124,23 +127,8 @@ final class BodyFit {
 
     /** `gameBody` is the default player's body (torso, legs, arms and so on) in game units. */
     BodyFit(Skeleton skeleton, List<double[]> gameBody) {
-        for (String side : new String[]{"R", "L"}) {
-            double s = side.equals("R") ? -1 : 1;
-            segment(skeleton, "Bip01_" + side + "_UpperArm", "Bip01_" + side + "_Forearm", true);
-            segment(skeleton, "Bip01_" + side + "_Forearm", "Bip01_" + side + "_Hand", true);
-            segments.add(new Segment("Bip01_" + side + "_Hand", skeleton.bind("Bip01_" + side + "_Hand"), new double[]{s * 0.49, 0.71, 0.04}, true));
-            segment(skeleton, "Bip01_" + side + "_Thigh", "Bip01_" + side + "_Calf", false);
-            segment(skeleton, "Bip01_" + side + "_Calf", "Bip01_" + side + "_Foot", false);
-            double[] foot = skeleton.bind("Bip01_" + side + "_Foot");
-            segments.add(new Segment("Bip01_" + side + "_Foot", foot, new double[]{foot[0], 0.0, foot[2] - 0.12}, false));
-        }
-        double[] pelvis = skeleton.bind("Bip01_Pelvis");
-        segments.add(new Segment("Bip01_Pelvis", new double[]{pelvis[0], pelvis[1] - 0.04, pelvis[2]}, skeleton.bind("Bip01_Spine"), false));
-        segment(skeleton, "Bip01_Spine", "Bip01_Spine1", false);
-        segment(skeleton, "Bip01_Spine1", "Bip01_Neck", false);
-        segment(skeleton, "Bip01_Neck", "Bip01_Head", false);
-        double[] head = skeleton.bind("Bip01_Head");
-        segments.add(new Segment("Bip01_Head", head, new double[]{head[0], 0.98, head[2]}, false));
+        armSkin = new SkinTransfer(skeleton, BodyFit::isArmBone);
+        bodySkin = new SkinTransfer(skeleton, bone -> !isArmBone(bone));
 
         // Body shape at each height: Zomboid's body (arms left out) against
         // the game's default player mapped to the same heights.
@@ -191,8 +179,9 @@ final class BodyFit {
         armRatio = gameArmThickness > 0 ? clamp(0.035 / (gameArmThickness * ModelExporter.SCALE)) : 1;
     }
 
-    private void segment(Skeleton skeleton, String from, String to, boolean arm) {
-        segments.add(new Segment(from, skeleton.bind(from), skeleton.bind(to), arm));
+    /** Whether a bone moves an arm, from the upper arm out to the fingers. */
+    static boolean isArmBone(String bone) {
+        return bone.contains("UpperArm") || bone.contains("Forearm") || bone.contains("Hand") || bone.contains("Finger");
     }
 
     /** Whether a point on the game's player (x, height up from the feet) is on an arm rather than the body. */
@@ -211,6 +200,27 @@ final class BodyFit {
 
     /** The same for a model standing in `pose`, scaled to the player's size first. */
     Bound fit(double x, double y, double z, Pose pose, boolean armsAllowed) {
+        return place(x, y, z, pose, armsAllowed && onArm(x, y, z, pose));
+    }
+
+    /**
+     * Whether a point (game units, y down) of a model standing in `pose` is
+     * on an arm: close to the arm's line below the shoulder, or anywhere out
+     * past the shoulder (hands and fingers spread wider than the arm's line,
+     * and can hang below the hips). Legs stay well inside the shoulders.
+     */
+    static boolean onArm(double x, double y, double z, Pose pose) {
+        double k = pose.toPlayer();
+        double h = -y * k;
+        double rx = Math.abs(x * k) - pose.shoulderX();
+        double rh = GAME_HEIGHTS[4] - h;
+        double along = rx * pose.out() + rh * pose.down();
+        double across = rx * pose.down() - rh * pose.out();
+        return h > 80 && along > 2 && (across > -6 && across < 16 || rx > 6);
+    }
+
+    /** Places a point on the arm (`arm`) or the body, and binds it. */
+    Bound place(double x, double y, double z, Pose pose, boolean arm) {
         double k = pose.toPlayer();
         x *= k;
         z *= k;
@@ -222,11 +232,6 @@ final class BodyFit {
         double rh = GAME_HEIGHTS[4] - h;
         double along = rx * pose.out() + rh * pose.down();
         double across = rx * pose.down() - rh * pose.out();
-        // On the arm: close to the arm's line below the shoulder, or anywhere
-        // out past the shoulder (hands and fingers spread wider than the
-        // arm's line, and can hang below the hips). Legs stay well inside the
-        // shoulders.
-        boolean arm = armsAllowed && h > 80 && along > 2 && (across > -6 && across < 16 || rx > 6);
         if (arm) {
             double side = Math.signum(x);
             double stretch = PLAYER_ARM_LENGTH / pose.armLength();
@@ -250,42 +255,13 @@ final class BodyFit {
         return bind(p, arm);
     }
 
-    /** Binds a point to its nearest bone, and blends in the next nearest if they meet at a joint close by. */
+    /**
+     * Lifts a point clear of the body and binds it with the weights of the
+     * body under it: arms from the arms, the rest from the rest.
+     */
     private Bound bind(double[] p, boolean arm) {
-        Segment best = null;
-        Segment next = null;
-        double bestDistance = Double.MAX_VALUE;
-        double nextDistance = Double.MAX_VALUE;
-        for (Segment s : segments) {
-            if (s.arm != arm) {
-                continue;
-            }
-            double d = distance(p, s.a, s.b);
-            if (d < bestDistance) {
-                next = best;
-                nextDistance = bestDistance;
-                best = s;
-                bestDistance = d;
-            } else if (d < nextDistance) {
-                next = s;
-                nextDistance = d;
-            }
-        }
-        if (next == null || !joined(best, next)) {
-            return new Bound(p, best.bone, null, 0);
-        }
-        double weight = Math.max(0, Math.min(0.5, 0.5 - (nextDistance - bestDistance) / (2 * BLEND)));
-        return weight > 0 ? new Bound(p, best.bone, next.bone, weight) : new Bound(p, best.bone, null, 0);
-    }
-
-    /** Whether two bones meet at a joint: one ends where the other starts. */
-    private static boolean joined(Segment s, Segment t) {
-        return close(s.a, t.b) || close(s.b, t.a);
-    }
-
-    private static boolean close(double[] a, double[] b) {
-        double[] d = ModelExporter.sub(a, b);
-        return ModelExporter.dot(d, d) < 1e-8;
+        SkinTransfer skin = arm ? armSkin : bodySkin;
+        return skin.bind(skin.outside(p, GAP));
     }
 
     /** A height on the game's player as a height on Zomboid's T-pose. */
@@ -345,15 +321,5 @@ final class BodyFit {
                 t[i] = 1;
             }
         }
-    }
-
-    private static double distance(double[] p, double[] a, double[] b) {
-        double[] ab = ModelExporter.sub(b, a);
-        double[] ap = ModelExporter.sub(p, a);
-        double len = ModelExporter.dot(ab, ab);
-        double t = len == 0 ? 0 : Math.max(0, Math.min(1, ModelExporter.dot(ap, ab) / len));
-        double[] q = ModelExporter.add(a, ModelExporter.scale(ab, t));
-        double[] d = ModelExporter.sub(p, q);
-        return Math.sqrt(ModelExporter.dot(d, d));
     }
 }

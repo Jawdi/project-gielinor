@@ -100,6 +100,32 @@ final class ModelExporter {
         return out;
     }
 
+    /**
+     * Each vertex's animation group. The cache library keeps these only as
+     * a private table from group to vertices, built as it loads a model.
+     */
+    private static List<Integer> groups(ModelDefinition model) {
+        Integer[] out = new Integer[model.vertexCount];
+        java.util.Arrays.fill(out, -1);
+        try {
+            java.lang.reflect.Field field = ModelDefinition.class.getDeclaredField("vertexGroups");
+            field.setAccessible(true);
+            int[][] table = (int[][]) field.get(model);
+            if (table != null) {
+                for (int group = 0; group < table.length; group++) {
+                    if (table[group] != null) {
+                        for (int v : table[group]) {
+                            out[v] = group;
+                        }
+                    }
+                }
+            }
+        } catch (ReflectiveOperationException e) {
+            // Without groups every vertex is placed on its own.
+        }
+        return java.util.Arrays.asList(out);
+    }
+
     /** A game model as a mesh in Zomboid's orientation (y up) and scale, recoloured as the item asks. */
     Mesh mesh(ModelDefinition model, ItemDefinition item) {
         Mesh mesh = rawMesh(model, item);
@@ -128,6 +154,7 @@ final class ModelExporter {
         for (int i = 0; i < model.vertexCount; i++) {
             mesh.vertices.add(new double[]{model.vertexX[i], model.vertexY[i], model.vertexZ[i]});
         }
+        mesh.groups.addAll(groups(model));
         for (int i = 0; i < model.faceCount; i++) {
             boolean seeThrough = model.faceTransparencies != null && (model.faceTransparencies[i] & 0xff) >= 250;
             if (model.faceColors[i] == -2 || seeThrough) {

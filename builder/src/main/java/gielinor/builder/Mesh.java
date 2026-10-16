@@ -93,7 +93,15 @@ final class Mesh {
      * at its colour's cell in the palette texture `texture`.
      */
     void writeX(Path file, String name, String texture, Palette palette) throws IOException {
-        writeX(file, name, texture, palette, null, null);
+        writeX(file, name, texture, palette, null, null, null);
+    }
+
+    /**
+     * Writes the mesh as a text `.X` file, each face pointing at its own cell
+     * of `atlas`, for the held items Zomboid paints blood on.
+     */
+    void writeX(Path file, String name, String texture, FaceAtlas atlas) throws IOException {
+        writeX(file, name, texture, null, atlas, null, null);
     }
 
     /**
@@ -102,25 +110,30 @@ final class Mesh {
      * `bones` names the bone each vertex is bound to.
      */
     void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, Bound[] bounds) throws IOException {
-        writeX(file, name, texture, palette, skeleton, bounds);
+        writeX(file, name, texture, palette, null, skeleton, bounds);
     }
 
-    private void writeX(Path file, String name, String texture, Palette palette, Skeleton skeleton, Bound[] bounds) throws IOException {
-        // Faces sharing a corner and a colour share the written vertex; each
-        // face still gets its own flat normal through the normal list.
+    private void writeX(Path file, String name, String texture, Palette palette, FaceAtlas atlas, Skeleton skeleton, Bound[] bounds)
+            throws IOException {
+        // With a palette, faces sharing a corner and a colour share the
+        // written vertex; with an atlas every face's corners are its own, as
+        // each face has its own cell. Each face gets its own flat normal
+        // through the normal list either way.
         java.util.Map<Long, Integer> written = new java.util.HashMap<>();
         List<int[]> corners = new ArrayList<>();
         List<Integer> sources = new ArrayList<>();
-        List<Integer> sourceColours = new ArrayList<>();
+        List<double[]> uvs = new ArrayList<>();
         for (int i = 0; i < faces.size(); i++) {
             int[] face = faces.get(i);
             int[] c = new int[3];
             for (int k = 0; k < 3; k++) {
                 int vertex = face[k];
                 int colour = colours.get(i) & 0xffffff;
-                c[k] = written.computeIfAbsent((long) vertex << 24 | colour, key -> {
+                double[] uv = atlas != null ? atlas.uv(i, k) : palette.uv(colour);
+                long key = atlas != null ? (long) i << 2 | k : (long) vertex << 24 | colour;
+                c[k] = written.computeIfAbsent(key, x -> {
                     sources.add(vertex);
-                    sourceColours.add(colour);
+                    uvs.add(uv);
                     return sources.size() - 1;
                 });
             }
@@ -157,7 +170,7 @@ final class Mesh {
         }
         out.append("   { Gielinor }\n  }\n\n  MeshTextureCoords {\n   ").append(count).append(";\n");
         for (int i = 0; i < count; i++) {
-            double[] uv = palette.uv(sourceColours.get(i));
+            double[] uv = uvs.get(i);
             out.append("   ").append(f(uv[0])).append(';').append(f(uv[1])).append(i == count - 1 ? ";;\n" : ";,\n");
         }
         out.append("  }\n");

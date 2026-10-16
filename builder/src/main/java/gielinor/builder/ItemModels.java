@@ -424,7 +424,7 @@ final class ItemModels {
             return null;
         }
         ModelExporter.alignHeld(mesh, hand, template);
-        write(mesh, type, media);
+        writeHeld(mesh, type, media);
         return new ZomboidItems.Block("model " + type, files(type), model.children()).text(4);
     }
 
@@ -462,6 +462,15 @@ final class ItemModels {
         props.put("mesh", "Gielinor/" + name);
         props.put("texture", "Gielinor/" + name);
         return props;
+    }
+
+    /** Writes a held item's mesh with a texture cell for each face, so Zomboid's blood streaks along it (see {@link FaceAtlas}). */
+    private static void writeHeld(Mesh mesh, String name, Path media) throws IOException {
+        FaceAtlas atlas = new FaceAtlas(mesh);
+        Files.createDirectories(media.resolve("models_X/Gielinor"));
+        Files.createDirectories(media.resolve("textures/Gielinor"));
+        mesh.writeX(media.resolve("models_X/Gielinor/" + name + ".X"), name, name + ".png", atlas);
+        atlas.write(media.resolve("textures/Gielinor/" + name + ".png"));
     }
 
     private static void write(Mesh mesh, String name, Path media) throws IOException {

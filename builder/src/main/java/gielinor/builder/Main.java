@@ -158,10 +158,12 @@ public final class Main {
      * their names in `lua/shared/Gielinor_Outfits.lua` so the mod knows them
      * before Zomboid has read its outfits.
      *
-     * Each piece also gets an item (`scripts/gielinor_undead.txt`), worn in
-     * the `gielinor:figure` slot: Zomboid dresses a character in an outfit's
-     * clothing only through the item that names it, and skips clothing
-     * without one.
+     * The outfits are empty: they only pick and remember which look a zombie
+     * has. The mod lays the look on as a body visual (as Zomboid lays on its
+     * wounds), which is drawn and kept on the corpse but, unlike clothing,
+     * never becomes something to loot. Zomboid finds a body visual's model
+     * through the item that names it, so each piece gets an item
+     * (`scripts/gielinor_undead.txt`), never worn or found.
      */
     private static String undead(NpcManager npcs, ItemModels itemModels, Path media) throws IOException {
         List<NpcDefinition> all = new ArrayList<>(npcs.getNpcs());
@@ -191,11 +193,10 @@ public final class Main {
             if (!itemModels.exportFigure(name, n.models, n.recolorToFind, n.recolorToReplace, true, media)) {
                 continue;
             }
-            String guid = itemModels.guidOf(name);
             items.append("\n    item ").append(name).append("\n    {\n")
                 .append("        DisplayCategory = Clothing,\n")
                 .append("        ItemType = base:clothing,\n")
-                .append("        DisplayName = Gielinor ").append(zombie ? "zombie" : "monster").append(" remains,\n")
+                .append("        DisplayName = Gielinor ").append(zombie ? "zombie" : "monster").append(" look,\n")
                 .append("        Icon = TshirtGeneric,\n")
                 .append("        Weight = 0.5,\n")
                 .append("        BodyLocation = gielinor:figure,\n")
@@ -203,8 +204,7 @@ public final class Main {
                 .append("    }\n");
             String outfitGuid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:outfit:" + name).getBytes(StandardCharsets.UTF_8)).toString();
             String outfit = "\t\t<m_Name>Gielinor" + kind + "_" + n.id + "</m_Name>\r\n\t\t<m_Guid>" + outfitGuid + "</m_Guid>\r\n"
-                + "\t\t<m_Top>false</m_Top>\r\n\t\t<m_Pants>false</m_Pants>\r\n"
-                + "\t\t<m_items>\r\n\t\t\t<itemGUID>" + guid + "</itemGUID>\r\n\t\t</m_items>\r\n";
+                + "\t\t<m_Top>false</m_Top>\r\n\t\t<m_Pants>false</m_Pants>\r\n";
             male.append("\t<m_MaleOutfits>\r\n").append(outfit).append("\t</m_MaleOutfits>\r\n");
             female.append("\t<m_FemaleOutfits>\r\n").append(outfit).append("\t</m_FemaleOutfits>\r\n");
             if (zombie) {

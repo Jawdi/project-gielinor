@@ -3,6 +3,15 @@
 -- monsters (goblins, skeletons, guards...) into GielinorMob_<id>, and lists
 -- them in GielinorOutfits.
 --
+-- The outfits hold no clothes: they only pick, and remember through saves,
+-- which look a zombie has. The look itself (the model Gielinor_Zombie_<id>)
+-- is laid on as a body visual, the way Zomboid lays on a zombie's wounds: it
+-- is drawn and stays on the corpse, but unlike clothing it never turns into
+-- something to loot. Zomboid's own body beneath is hidden by giving it a
+-- fully transparent skin (clothing hides it with masks, which only worn
+-- clothing has), and anything else a zombie wears or shows is taken off,
+-- its hair and wounds too, so that only the look shows.
+--
 -- Zombies come from three places, and each is covered:
 -- * Most are picked from the zone tables, which Zomboid reads once, the
 --   first time a zombie needs dressing. As this file loads, the default mix
@@ -10,13 +19,12 @@
 --   weddings and so on) lose their own outfits, so they draw from it too.
 -- * Some are dressed directly in a named outfit (a police car's crew, say).
 --   Those are dressed again.
--- * Zomboid gives every zombie random underwear, cut for its own body, which
---   would show through Gielinor's slimmer figures; it's taken off.
+-- * Zomboid gives every zombie random underwear; it's taken off with the
+--   rest.
 --
 -- Zomboid dresses a zombie after it's made, not as it's made: it marks the
 -- zombie to be dressed when first drawn, and the first time an outfit is
--- used its clothes load in the background and the zombie is dressed (with
--- fresh underwear) again once they have. So zombies are checked as they
+-- used it can be dressed again later. So zombies are checked as they
 -- update, the modding guides' way, rather than as they're made.
 
 require "NPCs/ZombiesZoneDefinition"
@@ -69,34 +77,59 @@ local function randomOutfit()
     return list[ZombRand(#list) + 1]
 end
 
---- Takes off everything a zombie wears that isn't part of its Gielinor look.
-local function stripOthers(zombie)
-    local visuals = zombie:getItemVisuals()
-    for i = visuals:size() - 1, 0, -1 do
-        if not isGielinor(visuals:get(i):getClothingItemName()) then
-            visuals:remove(i)
+--- The look an outfit stands for: GielinorZombie_26 is the model Gielinor_Zombie_26.
+local function lookOf(outfit)
+    return (outfit:gsub("^Gielinor(%a+)_", "Gielinor_%1_"))
+end
+
+-- A fully transparent skin, in the mod's media/textures/Body.
+local HIDDEN_SKIN = "Gielinor_Hidden"
+
+--- Takes off everything a zombie wears or shows but `look`.
+local function strip(zombie, look)
+    zombie:getItemVisuals():clear()
+    local body = zombie:getHumanVisual():getBodyVisuals()
+    for i = body:size() - 1, 0, -1 do
+        if body:get(i):getClothingItemName() ~= look then
+            body:remove(i)
         end
     end
 end
 
--- How often (one update in this many) a zombie in a Gielinor outfit is
--- checked for clothes Zomboid has added since.
+--- Gives a zombie its outfit's look, in place of anything else it shows.
+local function showLook(zombie, look)
+    strip(zombie, look)
+    local visual = zombie:getHumanVisual()
+    visual:addBodyVisual(look)
+    visual:setSkinTextureName(HIDDEN_SKIN)
+    visual:setHairModel("Bald")
+    visual:setBeardModel("")
+    zombie:resetModelNextFrame()
+end
+
+-- How often (one update in this many) a zombie is checked for clothes or
+-- wounds Zomboid has put on it since.
 local STRIP_EVERY = 30
 
 local function onZombieUpdate(zombie)
     if isClient() or zombie:isSkeleton() then
         return
     end
-    if not isGielinor(zombie:getOutfitName()) then
+    local outfit = zombie:getOutfitName()
+    if not isGielinor(outfit) then
         zombie:dressInPersistentOutfit(randomOutfit())
-        stripOthers(zombie)
-        zombie:resetModelNextFrame()
-    elseif ZombRand(STRIP_EVERY) == 0 then
-        local before = zombie:getItemVisuals():size()
-        stripOthers(zombie)
-        if zombie:getItemVisuals():size() ~= before then
-            zombie:resetModelNextFrame()
+        outfit = zombie:getOutfitName()
+        if not isGielinor(outfit) then
+            return
         end
+    end
+    local look = lookOf(outfit)
+    if not zombie:getHumanVisual():hasBodyVisualFromItemType("Gielinor." .. look) then
+        showLook(zombie, look)
+    elseif ZombRand(STRIP_EVERY) == 0
+            and (zombie:getItemVisuals():size() > 0 or zombie:getHumanVisual():getBodyVisuals():size() > 1) then
+        strip(zombie, look)
+        zombie:resetModelNextFrame()
     end
 end
 

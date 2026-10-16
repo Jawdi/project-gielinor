@@ -150,10 +150,20 @@ local function onZombieUpdate(zombie)
     end
 end
 
+--- Names the clothes a zombie drops for their colours, as Zomboid makes them
+--- from what the zombie wore when it dies.
+local function onZombieDead(zombie)
+    local items = zombie:getInventory():getItems()
+    for i = 0, items:size() - 1 do
+        GielinorBody.nameClothes(items:get(i))
+    end
+end
+
 if haveOutfits() then
     replaceDefaultMix()
     emptyZones()
     Events.OnZombieUpdate.Add(onZombieUpdate)
+    Events.OnZombieDead.Add(onZombieDead)
     print("Project Gielinor: every zombie is zombified Gielinor folk")
 else
     print("Project Gielinor: no Gielinor bodies found. Build the content pack with the Project Gielinor Content Builder.")

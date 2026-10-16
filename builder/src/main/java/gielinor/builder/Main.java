@@ -341,7 +341,7 @@ public final class Main {
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("clothing/clothing.xml"), zombieOutfits(media), StandardCharsets.UTF_8);
-        Files.writeString(media.resolve("scripts/gielinor_wardrobe.txt"), Wardrobe.write(itemModels, media), StandardCharsets.UTF_8);
+        Files.writeString(media.resolve("scripts/gielinor_wardrobe.txt"), Wardrobe.write(itemModels, media, zomboid.toPath()), StandardCharsets.UTF_8);
         Files.writeString(media.resolve("scripts/gielinor_animals.txt"), animals(npcs, itemModels, scripts, zomboid, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);
 

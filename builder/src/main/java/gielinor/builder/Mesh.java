@@ -99,7 +99,7 @@ final class Mesh {
      * at its colour's cell in the palette texture `texture`.
      */
     void writeX(Path file, String name, String texture, ColourMap palette) throws IOException {
-        writeX(file, name, texture, palette, null, null, null);
+        writeX(file, name, texture, palette, null, null, null, null);
     }
 
     /**
@@ -107,7 +107,17 @@ final class Mesh {
      * of `atlas`, for the held items Zomboid paints blood on.
      */
     void writeX(Path file, String name, String texture, FaceAtlas atlas) throws IOException {
-        writeX(file, name, texture, null, atlas, null, null);
+        writeX(file, name, texture, null, atlas, null, null, null);
+    }
+
+    /** Texture coordinates for each corner of each face. */
+    interface FaceUv {
+        double[] uv(int face, int corner);
+    }
+
+    /** Writes the mesh skinned to Zomboid's skeleton with texture coordinates of its own for each face. */
+    void writeSkinnedX(Path file, String name, String texture, FaceUv faceUv, Skeleton skeleton, Bound[] bounds) throws IOException {
+        writeX(file, name, texture, null, null, faceUv, skeleton, bounds);
     }
 
     /**
@@ -116,11 +126,11 @@ final class Mesh {
      * `bones` names the bone each vertex is bound to.
      */
     void writeSkinnedX(Path file, String name, String texture, ColourMap palette, Skeleton skeleton, Bound[] bounds) throws IOException {
-        writeX(file, name, texture, palette, null, skeleton, bounds);
+        writeX(file, name, texture, palette, null, null, skeleton, bounds);
     }
 
-    private void writeX(Path file, String name, String texture, ColourMap palette, FaceAtlas atlas, Skeleton skeleton, Bound[] bounds)
-            throws IOException {
+    private void writeX(Path file, String name, String texture, ColourMap palette, FaceAtlas atlas, FaceUv faceUv,
+            Skeleton skeleton, Bound[] bounds) throws IOException {
         // With a palette, faces sharing a corner and a colour share the
         // written vertex; with an atlas every face's corners are its own, as
         // each face has its own cell. Each face gets its own flat normal
@@ -135,8 +145,8 @@ final class Mesh {
             for (int k = 0; k < 3; k++) {
                 int vertex = face[k];
                 int colour = colours.get(i) & 0xffffff;
-                double[] uv = atlas != null ? atlas.uv(i, k) : palette.uv(colour);
-                long key = atlas != null ? (long) i << 2 | k : (long) vertex << 24 | colour;
+                double[] uv = faceUv != null ? faceUv.uv(i, k) : atlas != null ? atlas.uv(i, k) : palette.uv(colour);
+                long key = atlas != null || faceUv != null ? (long) i << 2 | k : (long) vertex << 24 | colour;
                 c[k] = written.computeIfAbsent(key, x -> {
                     sources.add(vertex);
                     uvs.add(uv);

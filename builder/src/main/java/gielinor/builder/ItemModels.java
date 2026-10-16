@@ -226,10 +226,12 @@ final class ItemModels {
         if (part.faces.isEmpty()) {
             return false;
         }
+        String[] parts = bodyParts(part, bounds);
         pushAlongSurface(part, push);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Files.createDirectories(meshDir);
-        part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png", palette, skeleton, bounds);
+        part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png",
+            (face, corner) -> palette.uv(parts[face], part.colours.get(face), face), skeleton, bounds);
         java.util.List<String> textures = new java.util.ArrayList<>();
         for (int i = 0; i < choices; i++) {
             textures.add(palette.name() + "_" + i);
@@ -306,6 +308,42 @@ final class ItemModels {
             bounds.add(new Bound(p, near.bones(), near.weights()));
             return mesh.vertices.size() - 1;
         });
+    }
+
+    /** The blood mask body part (see {@link SharedPalette#PARTS}) of the bone each place on the body moves with. */
+    private static final Map<String, String> BONE_PARTS = Map.ofEntries(
+        Map.entry("Bip01_L_Hand", "HandL"), Map.entry("Bip01_R_Hand", "HandR"),
+        Map.entry("Bip01_L_Forearm", "LArmL"), Map.entry("Bip01_R_Forearm", "LArmR"),
+        Map.entry("Bip01_L_UpperArm", "UArmL"), Map.entry("Bip01_R_UpperArm", "UArmR"),
+        Map.entry("Bip01_Spine1", "Chest"), Map.entry("Bip01_Spine", "Stomach"), Map.entry("Bip01_Pelvis", "Groin"),
+        Map.entry("Bip01_Head", "Head"), Map.entry("Bip01_Neck", "Neck"),
+        Map.entry("Bip01_L_Thigh", "ULegL"), Map.entry("Bip01_R_Thigh", "ULegR"),
+        Map.entry("Bip01_L_Calf", "LLegL"), Map.entry("Bip01_R_Calf", "LLegR"),
+        Map.entry("Bip01_L_Foot", "FootL"), Map.entry("Bip01_R_Foot", "FootR"));
+
+    /**
+     * The body part each face covers, for where Zomboid paints its blood:
+     * the part of the bone most of its corners move with; the chest, stomach
+     * and hips' faces that look backwards are the back. Both games face their
+     * models along -z.
+     */
+    private String[] bodyParts(Mesh mesh, Bound[] bounds) {
+        double sign = outward ? 1 : -1;
+        String[] out = new String[mesh.faces.size()];
+        for (int f = 0; f < out.length; f++) {
+            Map<String, Integer> votes = new HashMap<>();
+            for (int v : mesh.faces.get(f)) {
+                votes.merge(bounds[v].bones()[0], 1, Integer::sum);
+            }
+            String bone = votes.entrySet().stream().max(Map.Entry.comparingByValue()).get().getKey();
+            String part = BONE_PARTS.getOrDefault(bone, "Chest");
+            boolean torso = part.equals("Chest") || part.equals("Stomach") || part.equals("Groin");
+            if (torso && sign * mesh.normal(f)[2] > 0) {
+                part = "Back";
+            }
+            out[f] = part;
+        }
+        return out;
     }
 
     /** Moves each vertex `distance` along its faces' average outward normal. */

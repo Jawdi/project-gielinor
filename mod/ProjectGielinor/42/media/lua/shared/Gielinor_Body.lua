@@ -258,6 +258,39 @@ function GielinorBody.wornBy(character)
     return out
 end
 
+-- The clothing colours' names, plain where the game's are fanciful (its
+-- "Navy" is dark blue, its "Lumbridge Blue" light blue), in the designer's
+-- order for tops (the OSRS Wiki's Thessalia's Makeovers page names them).
+local TOP_COLOURS = {
+    "Olive", "Dark grey", "Dark red", "Dark blue", "Tan", "White", "Red", "Blue", "Green", "Yellow",
+    "Purple", "Orange", "Pink", "Light green", "Light blue", "Dark green", "Black", "Grey", "Cream", "Peach",
+    "Light blue", "Blue", "Light pink", "Red", "Brown", "Light green", "Teal", "Purple", "Light purple",
+}
+-- Trousers list the same colours but with the default green first.
+local LEG_COLOURS = {TOP_COLOURS[16]}
+for i = 1, 15 do
+    table.insert(LEG_COLOURS, TOP_COLOURS[i])
+end
+for i = 17, #TOP_COLOURS do
+    table.insert(LEG_COLOURS, TOP_COLOURS[i])
+end
+-- Shoes (the game's Brown, Khaki, Ashen, Dark, Terracotta, Grey).
+local SHOE_COLOURS = {"Brown", "Olive", "Light brown", "Black", "Dark brown", "Grey"}
+local COLOUR_NAMES = {top = TOP_COLOURS, legs = LEG_COLOURS, feet = SHOE_COLOURS}
+
+--- Names a Gielinor clothing item for its colour and kind ("Yellow skirt").
+function GielinorBody.nameClothes(item)
+    local kind = item and GielinorBody.clothingKind(item:getFullType())
+    if not kind or not item:getVisual() then
+        return
+    end
+    local colour = math.floor(math.max(item:getVisual():getTextureChoice(), 0) / GielinorKits.skins) + 1
+    local name = COLOUR_NAMES[kind][colour]
+    if name then
+        item:setName(name .. " " .. string.lower(item:getScriptItem():getDisplayName()))
+    end
+end
+
 --- Dresses anything that wears items in a look's clothes. `make` makes an
 --- item of a type.
 local function wearClothes(wearer, look, make)
@@ -267,6 +300,7 @@ local function wearClothes(wearer, look, make)
             if item:getVisual() then
                 item:getVisual():setTextureChoice(piece[2])
             end
+            GielinorBody.nameClothes(item)
             wearer:setWornItem(item:getBodyLocation(), item)
         end
     end

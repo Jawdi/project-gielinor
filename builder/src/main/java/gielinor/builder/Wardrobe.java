@@ -119,16 +119,46 @@ final class Wardrobe {
     private static final String MODULE = Main.MODULE;
 
     /**
+     * The clothes' names, by kit, from the game's own names for its styles
+     * (the OSRS Wiki's Thessalia's Makeovers page lists them in the cache's
+     * order), as a garment rather than a style ("Light buttons" is a
+     * light-buttoned shirt). Kits added since have none; they're named by
+     * their shape.
+     */
+    private static final Map<Integer, String> STYLE_NAMES = Map.ofEntries(
+        // Body type A's tops.
+        Map.entry(18, "Shirt"), Map.entry(19, "Light-buttoned shirt"), Map.entry(20, "Dark-buttoned shirt"),
+        Map.entry(21, "Jacket"), Map.entry(22, "Shirt"), Map.entry(23, "Stitched shirt"), Map.entry(24, "Torn shirt"),
+        Map.entry(25, "Two-toned shirt"), Map.entry(105, "Sweater"), Map.entry(106, "Buttoned shirt"), Map.entry(107, "Vest"),
+        Map.entry(108, "Princely shirt"), Map.entry(109, "Ripped weskit"), Map.entry(110, "Torn weskit"),
+        // Body type B's tops.
+        Map.entry(56, "Top"), Map.entry(57, "Crop top"), Map.entry(58, "Polo neck"), Map.entry(59, "Simple top"),
+        Map.entry(60, "Torn top"), Map.entry(89, "Sweater"), Map.entry(90, "Shirt"), Map.entry(91, "Vest"),
+        Map.entry(92, "Frilly top"), Map.entry(93, "Corset"), Map.entry(94, "Bodice"),
+        // Body type A's legs.
+        Map.entry(36, "Trousers"), Map.entry(37, "Shorts"), Map.entry(38, "Flares"), Map.entry(39, "Turn-up trousers"),
+        Map.entry(40, "Tatty trousers"), Map.entry(41, "Beach shorts"), Map.entry(100, "Princely trousers"),
+        Map.entry(101, "Leggings"), Map.entry(102, "Striped trousers"), Map.entry(103, "Ripped trousers"),
+        Map.entry(104, "Patched trousers"),
+        // Body type B's legs.
+        Map.entry(70, "Trousers"), Map.entry(71, "Skirt"), Map.entry(72, "Flares"), Map.entry(73, "Long skirt"),
+        Map.entry(74, "Long narrow skirt"), Map.entry(75, "Tatty trousers"), Map.entry(76, "Turn-up trousers"),
+        Map.entry(77, "Short skirt"), Map.entry(78, "Layered skirt"), Map.entry(135, "Sash skirt"),
+        Map.entry(136, "Big-hemmed skirt"), Map.entry(137, "Sash trousers"), Map.entry(138, "Patterned skirt"),
+        Map.entry(139, "Torn skirt"), Map.entry(140, "Patched skirt"));
+
+    /**
      * Writes the body, its parts and the clothes, their palettes' textures,
      * and the mod's list of them (`lua/shared/Gielinor_Kits.lua`). Returns
      * their item script.
      */
-    static String write(ItemModels models, Path media) throws IOException {
-        SharedPalette skin = new SharedPalette("GielinorSkin", 1);
-        SharedPalette hair = new SharedPalette("GielinorHair", 2);
-        SharedPalette tops = new SharedPalette("GielinorTop", 3);
-        SharedPalette legs = new SharedPalette("GielinorLegs", 2);
-        SharedPalette feet = new SharedPalette("GielinorFeet", 2);
+    static String write(ItemModels models, Path media, Path zomboid) throws IOException {
+        Path masks = zomboid.resolve("media/textures/BloodTextures");
+        SharedPalette skin = new SharedPalette("GielinorSkin", 1, masks);
+        SharedPalette hair = new SharedPalette("GielinorHair", 2, masks);
+        SharedPalette tops = new SharedPalette("GielinorTop", 3, masks);
+        SharedPalette legs = new SharedPalette("GielinorLegs", 2, masks);
+        SharedPalette feet = new SharedPalette("GielinorFeet", 2, masks);
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         Map<Integer, List<KitDefinition>> byPart = new LinkedHashMap<>();
@@ -245,7 +275,9 @@ final class Wardrobe {
                     int[] kits = sleeves == 0 ? new int[]{torso.getId()} : new int[]{torso.getId(), sleeves};
                     if (models.exportWardrobe(name, kits, crown, CLOTHES_OUT, tops, TORSO.offered * SKIN.offered,
                             (source, rgb, height, across) -> clothing(source, rgb, TORSO), media)) {
-                        script.append(item(name, "Gielinor top", sleeves == 0 ? CLOTHES_VEST : CLOTHES_TOP));
+                        String style = STYLE_NAMES.getOrDefault(torso.getId(), type == 0 ? "Shirt" : "Top");
+                        String topName = sleeves == 0 ? "Sleeveless " + style.toLowerCase() : style;
+                        script.append(item(name, topName, sleeves == 0 ? CLOTHES_VEST : CLOTHES_TOP));
                         lua.append("            [\"").append(torso.getId()).append('_').append(sleeves)
                             .append("\"] = \"").append(MODULE).append('.').append(name).append("\",\n");
                         counted++;
@@ -258,19 +290,29 @@ final class Wardrobe {
             lua.append("        legs = {\n");
             for (KitDefinition kit : byPart.getOrDefault(base + LEGS_PART, List.of())) {
                 String name = "GielinorTrousers_" + kit.getId();
+                LegShape shape = new LegShape();
                 if (models.exportWardrobe(name, new int[]{kit.getId()}, crown, CLOTHES_OUT, legs, LEGS.offered * SKIN.offered,
-                        (source, rgb, height, across) -> clothing(source, rgb, LEGS), media)) {
-                    script.append(item(name, "Gielinor trousers", CLOTHES_TROUSERS));
+                        (source, rgb, height, across) -> {
+                            int c = clothing(source, rgb, LEGS);
+                            if (source != SKIN.source) {
+                                shape.see(height, across);
+                            }
+                            return c;
+                        }, media)) {
+                    script.append(item(name, STYLE_NAMES.getOrDefault(kit.getId(), shape.name()), CLOTHES_TROUSERS));
                     lua.append("            { kit = ").append(kit.getId()).append(", item = \"").append(MODULE).append('.').append(name).append("\" },\n");
                     counted++;
                 }
             }
             lua.append("        },\n        feet = {\n");
-            for (KitDefinition kit : byPart.getOrDefault(base + FEET_PART, List.of())) {
+            List<KitDefinition> shoes = byPart.getOrDefault(base + FEET_PART, List.of());
+            for (KitDefinition kit : shoes) {
                 String name = "GielinorShoes_" + kit.getId();
+                // The game's two styles, basic and elven, in that order.
+                String shoeName = shoes.indexOf(kit) == 0 ? "Boots" : "Elven boots";
                 if (models.exportWardrobe(name, new int[]{kit.getId()}, crown, CLOTHES_OUT + 0.002, feet, FEET.offered * SKIN.offered,
                         (source, rgb, height, across) -> clothing(source, rgb, FEET), media)) {
-                    script.append(item(name, "Gielinor boots", CLOTHES_SHOES));
+                    script.append(item(name, shoeName, CLOTHES_SHOES));
                     lua.append("            { kit = ").append(kit.getId()).append(", item = \"").append(MODULE).append('.').append(name).append("\" },\n");
                     counted++;
                 }
@@ -339,6 +381,31 @@ final class Wardrobe {
                 int[] all = colour.secondSource() >= 0 ? new int[]{shades[0], shades[1], skinShade} : new int[]{shades[0], skinShade};
                 palette.write(dir.resolve(palette.name() + "_" + (c * skins + k) + ".png"), all);
             }
+        }
+    }
+
+    /**
+     * What a pair of legs is, from where its cloth reaches: a skirt joins the
+     * legs (cloth across the middle well below the crotch, which trousers
+     * have only at the crotch), a long one down to the ankles; shorts stop
+     * above the knee; anything else is trousers.
+     */
+    private static final class LegShape {
+        private double lowest = Double.MAX_VALUE;
+        private boolean joined;
+
+        void see(double height, double across) {
+            lowest = Math.min(lowest, height);
+            if (height < 0.33 && across < 0.02) {
+                joined = true;
+            }
+        }
+
+        String name() {
+            if (joined) {
+                return lowest < 0.15 ? "Long skirt" : "Skirt";
+            }
+            return lowest > 0.30 ? "Shorts" : "Trousers";
         }
     }
 

@@ -85,14 +85,22 @@ end
 -- A fully transparent skin, in the mod's media/textures/Body.
 local HIDDEN_SKIN = "Gielinor_Hidden"
 
---- Takes off everything a zombie wears or shows but `look`.
+--- Takes off everything a zombie wears or shows but `look`: clothes, and
+--- the wounds, bandages and stubble Zomboid shows as body visuals. (They're
+--- removed by type: Lua's numbers reach Java as objects, so a list's
+--- remove(i) would look for the number in the list instead.)
 local function strip(zombie, look)
     zombie:getItemVisuals():clear()
-    local body = zombie:getHumanVisual():getBodyVisuals()
-    for i = body:size() - 1, 0, -1 do
+    local visual = zombie:getHumanVisual()
+    local body = visual:getBodyVisuals()
+    local others = {}
+    for i = 0, body:size() - 1 do
         if body:get(i):getClothingItemName() ~= look then
-            body:remove(i)
+            table.insert(others, body:get(i):getItemType())
         end
+    end
+    for _, itemType in ipairs(others) do
+        visual:removeBodyVisualFromItemType(itemType)
     end
 end
 

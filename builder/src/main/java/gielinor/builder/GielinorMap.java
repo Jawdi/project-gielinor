@@ -33,6 +33,14 @@ final class GielinorMap {
     /** Where new characters start: the courtyard of Lumbridge castle, in the game's tile coordinates. */
     static final int START_X = 3222;
     static final int START_Y = 3218;
+    /**
+     * Each chunk's zombie density. Kentucky's own map gives its populated
+     * chunks about 2 (and most none, averaging 0.07); every chunk of land
+     * here gets 1 for now.
+     */
+    static final int ZOMBIE_DENSITY = 1;
+    /** No zombies within this many squares of where characters start, so they start safe in Lumbridge castle. */
+    static final int SAFE_RADIUS = 80;
 
     /**
      * Writes the ground of {@link #FIRST_SQUARE_X} to {@link #LAST_SQUARE_Y}.
@@ -101,7 +109,9 @@ final class GielinorMap {
                 }
             }
         }
-        // Zombies everywhere but on water.
+        // Zombies everywhere but on water and around where characters start.
+        int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
+        int startY = height - (START_Y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
         for (int cx = 0; cx < cellsX; cx++) {
             for (int cy = 0; cy < cellsY; cy++) {
                 for (int kx = 0; kx < MapCell.CHUNKS; kx++) {
@@ -116,14 +126,16 @@ final class GielinorMap {
                                 }
                             }
                         }
-                        cells[cx][cy].setZombies(kx, ky, wet > MapCell.CHUNK * MapCell.CHUNK / 2 ? 0 : 16);
+                        int middleX = cx * MapCell.SIZE + kx * MapCell.CHUNK + MapCell.CHUNK / 2;
+                        int middleY = cy * MapCell.SIZE + ky * MapCell.CHUNK + MapCell.CHUNK / 2;
+                        boolean nearStart = Math.hypot(middleX - startX, middleY - startY) < SAFE_RADIUS;
+                        boolean onWater = wet > MapCell.CHUNK * MapCell.CHUNK / 2;
+                        cells[cx][cy].setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
                 }
                 cells[cx][cy].write(dir);
             }
         }
-        int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
-        int startY = height - (START_Y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
         writeInfo(dir);
         writeWorldMap(dir, ground, cellsX, cellsY);
         writeSpawnPoints(dir, startX, startY);

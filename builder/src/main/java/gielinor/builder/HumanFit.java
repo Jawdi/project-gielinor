@@ -7,12 +7,13 @@ import java.util.Map;
 
 /**
  * Puts the game's people (the player's body and clothes, zombies, goblins
- * and the like) on Zomboid's skeleton the way the game itself animates them:
- * each of a model's animation groups (an upper arm, a shin, a head) moves
- * rigidly with one bone. The model keeps its own shape, scaled to Zomboid's
- * height; only its limbs turn, the arms about the shoulders from however the
- * model holds them into Zomboid's T-pose, and the legs about the hips from
- * straight down into the splay of Zomboid's bind pose.
+ * and the like) on Zomboid's skeleton. The model keeps its own shape, scaled
+ * to Zomboid's height; only its limbs turn, the arms about the shoulders from
+ * however the model holds them into Zomboid's T-pose, and the legs about the
+ * hips from straight down into the splay of Zomboid's bind pose. Each of its
+ * animation groups (an upper arm, a shin, a head) then takes the bone nearest
+ * it, and each vertex the weights of Zomboid's body where it lies, as
+ * Zomboid's own clothes are weighted.
  *
  * Both games face their models along -z with the right side at -x, so no
  * axis is mirrored.
@@ -123,9 +124,8 @@ final class HumanFit {
                 // Back from the model's pose into the bind pose.
                 p = turn(p, transpose(turns.get(limb)), joint(limb));
             }
-            // How a vertex shares its joints goes by where it was, before
-            // the hands move to the grip, so the wrist bends as one.
-            Bound shared = blendAtJoints(p, bone);
+            // Weighted by where it was, before the hands move to the grip.
+            Bound shared = weightsFromBody(p, bone, armsAllowed);
             if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
                 p = toGrip(p, bone);
             }
@@ -135,28 +135,6 @@ final class HumanFit {
         return out;
     }
 
-    /**
-     * Each bone's parent, for the joints between them: where the two share
-     * the vertices about the joint, as Zomboid's own meshes are weighted, so
-     * the model bends there rather than parting.
-     */
-    private static final Map<String, String> PARENTS = Map.ofEntries(
-        Map.entry("Bip01_Spine", "Bip01_Pelvis"),
-        Map.entry("Bip01_Spine1", "Bip01_Spine"),
-        Map.entry("Bip01_Neck", "Bip01_Spine1"),
-        Map.entry("Bip01_Head", "Bip01_Neck"),
-        Map.entry("Bip01_L_UpperArm", "Bip01_Spine1"),
-        Map.entry("Bip01_R_UpperArm", "Bip01_Spine1"),
-        Map.entry("Bip01_L_Forearm", "Bip01_L_UpperArm"),
-        Map.entry("Bip01_R_Forearm", "Bip01_R_UpperArm"),
-        Map.entry("Bip01_L_Hand", "Bip01_L_Forearm"),
-        Map.entry("Bip01_R_Hand", "Bip01_R_Forearm"),
-        Map.entry("Bip01_L_Thigh", "Bip01_Pelvis"),
-        Map.entry("Bip01_R_Thigh", "Bip01_Pelvis"),
-        Map.entry("Bip01_L_Calf", "Bip01_L_Thigh"),
-        Map.entry("Bip01_R_Calf", "Bip01_R_Thigh"),
-        Map.entry("Bip01_L_Foot", "Bip01_L_Calf"),
-        Map.entry("Bip01_R_Foot", "Bip01_R_Calf"));
     /**
      * How far each hand is moved (in metres, the right then the left) so the
      * game's fist closes where Zomboid holds things. Zomboid's animations keep
@@ -204,77 +182,56 @@ final class HumanFit {
         return ModelExporter.add(p, ModelExporter.scale(shift, share));
     }
 
-    /** How far from a joint (in metres) its two bones share a vertex: half each at the joint, none at this distance. */
-    private static final double JOINT_REACH = 0.04;
-
     /**
-     * A vertex at `p` on `bone`, shared with the bone across any joint
-     * within {@link #JOINT_REACH}: the joint where `bone` meets its parent,
-     * and those where its children meet it.
+     * How Zomboid's body moves the point of it out from `p` (see
+     * {@link Skeleton#spotOutFrom}), as a vertex at `p` is to move: the
+     * weights of that point's triangle's corners, mixed
+     * by where on the triangle it lies. That's how Zomboid's own clothes are
+     * weighted (the body's weights carried over), so the shoulders go with
+     * the clavicles as the arms reach, the wrist mostly with the forearm, and
+     * the game's separate limb blocks meet alike at every joint. The fingers
+     * count as the hand, which the game's fists are, whole; without
+     * `armsAllowed` the arms (and clavicles) count for nothing. Anything the
+     * body gives none of goes with `bone`.
      */
-    private Bound blendAtJoints(double[] p, String bone) {
-        if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
-            Bound wrist = blendAtWrist(p, bone);
-            if (wrist != null) {
-                return wrist;
+    private Bound weightsFromBody(double[] p, String bone, boolean armsAllowed) {
+        Skeleton.Spot spot = skeleton.spotOutFrom(p);
+        int[] nearest = spot.face();
+        double[] at = spot.weights();
+        Map<String, Double> sum = new HashMap<>();
+        for (int k = 0; k < 3; k++) {
+            for (Map.Entry<String, Double> e : skeleton.bodyWeights.get(nearest[k]).entrySet()) {
+                String b = e.getKey();
+                if (b.contains("Finger")) {
+                    b = b.substring(0, "Bip01_R_".length()) + "Hand";
+                }
+                if (!armsAllowed && (isArm(b) || b.contains("Clavicle"))) {
+                    continue;
+                }
+                sum.merge(b, e.getValue() * at[k], Double::sum);
             }
         }
-        List<String> bones = new ArrayList<>();
-        List<Double> weights = new ArrayList<>();
-        double others = 0;
-        for (Map.Entry<String, String> joint : PARENTS.entrySet()) {
-            String child = joint.getKey();
-            String parent = joint.getValue();
-            String other = child.equals(bone) ? parent : parent.equals(bone) ? child : null;
-            if (other == null) {
-                continue;
-            }
-            double[] at = skeleton.bind(child);
-            double[] d = ModelExporter.sub(p, at);
-            double distance = Math.sqrt(ModelExporter.dot(d, d));
-            if (distance < JOINT_REACH) {
-                double w = 0.5 * (1 - distance / JOINT_REACH);
-                bones.add(other);
-                weights.add(w);
-                others += w;
-            }
+        List<Map.Entry<String, Double>> kept = new ArrayList<>(sum.entrySet());
+        kept.removeIf(e -> e.getValue() < 0.01);
+        kept.sort((x, y) -> Double.compare(y.getValue(), x.getValue()));
+        if (kept.size() > MAX_INFLUENCES) {
+            kept = kept.subList(0, MAX_INFLUENCES);
         }
-        if (others > 0.5) {
-            // Near several joints at once: keep at least half on its own bone.
-            for (int i = 0; i < weights.size(); i++) {
-                weights.set(i, weights.get(i) * 0.5 / others);
-            }
-            others = 0.5;
+        double total = kept.stream().mapToDouble(Map.Entry::getValue).sum();
+        if (total <= 0) {
+            return new Bound(p, new String[]{bone}, new double[]{1});
         }
-        bones.add(0, bone);
-        weights.add(0, 1 - others);
-        return new Bound(p, bones.toArray(new String[0]), weights.stream().mapToDouble(Double::doubleValue).toArray());
+        String[] bones = new String[kept.size()];
+        double[] weights = new double[kept.size()];
+        for (int i = 0; i < kept.size(); i++) {
+            bones[i] = kept.get(i).getKey();
+            weights[i] = kept.get(i).getValue() / total;
+        }
+        return new Bound(p, bones, weights);
     }
 
-    /** How far either side of the wrist (in metres, along the arm) the hand and forearm share a vertex. */
-    private static final double WRIST_REACH = 0.03;
-
-    /**
-     * A vertex near a wrist, shared between hand and forearm by how far
-     * along the arm it lies (half each at the wrist), or null if it isn't
-     * near one. The hand sits off the wrist's axis where it holds things, so
-     * the wrist bending swings it about; vertices either side of the seam
-     * between the game's forearm and hand must share alike, or the seam
-     * opens. By distance from the joint, they wouldn't.
-     */
-    private Bound blendAtWrist(double[] p, String bone) {
-        String side = bone.contains("_L_") ? "L" : "R";
-        String hand = "Bip01_" + side + "_Hand";
-        String forearm = "Bip01_" + side + "_Forearm";
-        double[] wrist = skeleton.bind(hand);
-        double[] along = unit(ModelExporter.sub(wrist, skeleton.bind(forearm)));
-        double d = ModelExporter.dot(ModelExporter.sub(p, wrist), along);
-        if (Math.abs(d) >= WRIST_REACH) {
-            return null;
-        }
-        double w = 0.5 + 0.5 * d / WRIST_REACH;
-        return new Bound(p, new String[]{hand, forearm}, new double[]{w, 1 - w});
-    }
+    /** The most bones a vertex goes with, as Zomboid's own meshes have it. */
+    private static final int MAX_INFLUENCES = 4;
 
     /**
      * Which way the model's arm on one side points from the shoulder: at its

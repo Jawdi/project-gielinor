@@ -126,6 +126,171 @@ final class Skeleton {
         return best == null ? "" : best;
     }
 
+    /** The point on a body triangle with these corner weights. */
+    double[] bodyPoint(int[] f, double[] w) {
+        double[] out = new double[3];
+        for (int k = 0; k < 3; k++) {
+            for (int c = 0; c < 3; c++) {
+                out[c] += bodyVertices.get(f[k])[c] * w[k];
+            }
+        }
+        return out;
+    }
+
+    /** The weights of a point projected onto a triangle's plane (not kept inside it). */
+    double[] planeWeights(double[] p, int[] f) {
+        double[] a = bodyVertices.get(f[0]);
+        double[] b = bodyVertices.get(f[1]);
+        double[] c = bodyVertices.get(f[2]);
+        double[] v0 = ModelExporter.sub(b, a);
+        double[] v1 = ModelExporter.sub(c, a);
+        double[] v2 = ModelExporter.sub(p, a);
+        double d00 = ModelExporter.dot(v0, v0);
+        double d01 = ModelExporter.dot(v0, v1);
+        double d11 = ModelExporter.dot(v1, v1);
+        double d20 = ModelExporter.dot(v2, v0);
+        double d21 = ModelExporter.dot(v2, v1);
+        double denom = d00 * d11 - d01 * d01;
+        if (Math.abs(denom) < 1e-12) {
+            return new double[]{1, 0, 0};
+        }
+        double v = (d11 * d20 - d01 * d21) / denom;
+        double w = (d00 * d21 - d01 * d20) / denom;
+        return new double[]{1 - v - w, v, w};
+    }
+
+    /** The weights of the point of a triangle nearest `p`. */
+    double[] closestWeights(double[] p, int[] f) {
+        double[] w = planeWeights(p, f);
+        if (w[0] >= 0 && w[1] >= 0 && w[2] >= 0) {
+            return w;
+        }
+        // Outside: the nearest point on one of its edges.
+        double best = Double.MAX_VALUE;
+        double[] out = {1, 0, 0};
+        for (int k = 0; k < 3; k++) {
+            double[] a = bodyVertices.get(f[k]);
+            double[] b = bodyVertices.get(f[(k + 1) % 3]);
+            double[] ab = ModelExporter.sub(b, a);
+            double len = ModelExporter.dot(ab, ab);
+            double t = len == 0 ? 0 : Math.max(0, Math.min(1, ModelExporter.dot(ModelExporter.sub(p, a), ab) / len));
+            double[] q = ModelExporter.add(a, ModelExporter.scale(ab, t));
+            double[] pq = ModelExporter.sub(p, q);
+            double d = Math.sqrt(ModelExporter.dot(pq, pq));
+            if (d < best) {
+                best = d;
+                out = new double[3];
+                out[k] = 1 - t;
+                out[(k + 1) % 3] = t;
+            }
+        }
+        return out;
+    }
+
+    /** A point on the body: its triangle, and the point's weights on the triangle's corners. */
+    record Spot(int[] face, double[] weights) {
+    }
+
+    /** The point on the body nearest `p`. */
+    Spot nearestSpot(double[] p) {
+        int[] nearest = bodyFaces.get(0);
+        double[] at = {1, 0, 0};
+        double best = Double.MAX_VALUE;
+        for (int[] f : bodyFaces) {
+            double[] w = closestWeights(p, f);
+            double[] d = ModelExporter.sub(p, bodyPoint(f, w));
+            double distance = ModelExporter.dot(d, d);
+            if (distance < best) {
+                best = distance;
+                nearest = f;
+                at = w;
+            }
+        }
+        return new Spot(nearest, at);
+    }
+
+    /**
+     * The point on the body straight out through `p` from the bone it lies
+     * along (or the nearest, if there's none out that way). The game's limbs
+     * lie inside Zomboid's; nearest to a point inside an arm may be the
+     * torso, or the arm's far side, where out from the bone it's always the
+     * arm, as far round it as the point is round its own.
+     */
+    Spot spotOutFrom(double[] p) {
+        double[] axis = nearestOnBones(p);
+        double[] out = axis == null ? null : ModelExporter.sub(p, axis);
+        if (out == null || ModelExporter.dot(out, out) < 1e-8) {
+            return nearestSpot(p);
+        }
+        double best = Double.MAX_VALUE;
+        Spot spot = null;
+        for (int[] f : bodyFaces) {
+            double[] hit = rayHit(axis, out, f);
+            if (hit != null && hit[3] < best) {
+                best = hit[3];
+                spot = new Spot(f, new double[]{hit[0], hit[1], hit[2]});
+            }
+        }
+        return spot != null ? spot : nearestSpot(p);
+    }
+
+    /** The bones moving the body that have a parent to run from, found when first wanted. */
+    private List<String> movingBones;
+
+    /** The point nearest `p` on the bones moving the body, each a line from its parent's joint to its own. */
+    private double[] nearestOnBones(double[] p) {
+        if (movingBones == null) {
+            movingBones = new ArrayList<>();
+            for (Map<String, Double> weights : bodyWeights) {
+                for (String bone : weights.keySet()) {
+                    if (!movingBones.contains(bone) && bindPositions.containsKey(parents.get(bone))) {
+                        movingBones.add(bone);
+                    }
+                }
+            }
+        }
+        double best = Double.MAX_VALUE;
+        double[] out = null;
+        for (String bone : movingBones) {
+            double[] a = bindPositions.get(parents.get(bone));
+            double[] b = bindPositions.get(bone);
+            double[] ab = ModelExporter.sub(b, a);
+            double len = ModelExporter.dot(ab, ab);
+            double t = len == 0 ? 0 : Math.max(0, Math.min(1, ModelExporter.dot(ModelExporter.sub(p, a), ab) / len));
+            double[] q = ModelExporter.add(a, ModelExporter.scale(ab, t));
+            double[] d = ModelExporter.sub(p, q);
+            if (ModelExporter.dot(d, d) < best) {
+                best = ModelExporter.dot(d, d);
+                out = q;
+            }
+        }
+        return out;
+    }
+
+    /** Where the ray from `from` along `dir` (forwards only) meets a body triangle: its weights and the distance along, or null. */
+    private double[] rayHit(double[] from, double[] dir, int[] f) {
+        double[] a = bodyVertices.get(f[0]);
+        double[] e1 = ModelExporter.sub(bodyVertices.get(f[1]), a);
+        double[] e2 = ModelExporter.sub(bodyVertices.get(f[2]), a);
+        double[] h = ModelExporter.cross(dir, e2);
+        double det = ModelExporter.dot(e1, h);
+        if (Math.abs(det) < 1e-12) {
+            return null;
+        }
+        double[] s = ModelExporter.sub(from, a);
+        double u = ModelExporter.dot(s, h) / det;
+        if (u < 0 || u > 1) {
+            return null;
+        }
+        double[] q = ModelExporter.cross(s, e1);
+        double v = ModelExporter.dot(dir, q) / det;
+        if (v < 0 || u + v > 1) {
+            return null;
+        }
+        double t = ModelExporter.dot(e2, q) / det;
+        return t > 0 ? new double[]{1 - u - v, u, v, t} : null;
+    }
+
     /** The index just past the block whose first brace follows `start`. */
     private static int blockEnd(String text, int start) {
         int depth = 0;

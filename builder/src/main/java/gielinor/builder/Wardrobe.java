@@ -85,17 +85,18 @@ final class Wardrobe {
      * kits and the game's model pieces it's made of. No designer kit is a bare
      * torso (they're all shirts), so those are undressed creatures': body type
      * A has the Gamer's (NPC 1019) bare torso, the game's own undressed man;
-     * body type B has a barbarian woman's (NPC
-     * 3072) torso and bare arms, her fur top a chest covering. (Her fur shorts
-     * join her legs to her hips in faces that stretch as she walks, so the
-     * legs are a designer kit's, with briefs.)
+     * body type B has a barbarian woman's (NPC 3072) torso, her fur top a
+     * chest covering. (Her arms are flat strips, thin seen edge on as the
+     * arms turn, and her fur shorts join her legs to her hips in faces that
+     * stretch as she walks, so the arms and legs are designer kits', the legs
+     * with briefs.)
      */
     private record Region(String name, int[][] kits, int[][] pieces) {
     }
 
     private static final List<Region> REGIONS = List.of(
         new Region("torso", new int[][]{{}, {}}, new int[][]{{315}, {11783}}),
-        new Region("arms", new int[][]{{27}, {}}, new int[][]{{}, {11772}}),
+        new Region("arms", new int[][]{{27}, {61}}, new int[][]{{}, {}}),
         new Region("hands", new int[][]{{33}, {67}}, new int[][]{{}, {}}),
         new Region("legs", new int[][]{{36}, {70}}, new int[][]{{}, {}}),
         new Region("feet", new int[][]{{42}, {79}}, new int[][]{{}, {}}));

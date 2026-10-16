@@ -22,10 +22,12 @@ import net.runelite.cache.definitions.ItemDefinition;
 import net.runelite.cache.fs.Store;
 
 /**
- * Project Gielinor's content builder. Reads the game cache of your own Old
- * School RuneScape install and writes the content pack the Project Gielinor
- * mod needs into Zomboid's mods folder: item scripts, icons and names. Nothing
+ * Project Gielinor's content builder. Reads one pinned version of the Old
+ * School RuneScape game cache (fetched once from the OpenRS2 archive; see
+ * {@link Pinned}) and writes the content pack the Project Gielinor mod needs
+ * into Zomboid's mods folder: items, models, zombies and the world. Nothing
  * from the game is shipped with the mod; this builds it on your machine.
+ * `--cache` builds from another cache folder instead.
  *
  * <pre>
  * gielinor-content-builder [--cache DIR] [--zomboid DIR] [--out DIR]
@@ -58,8 +60,7 @@ public final class Main {
             }
         }
         if (cache == null) {
-            cache = Locations.findCache().orElseThrow(() -> new IllegalStateException(
-                "No Old School RuneScape cache found. Install the game, log in once, or pass --cache <folder>."));
+            cache = Pinned.cache();
         }
         if (!Locations.isCache(cache)) {
             throw new IllegalStateException(cache + " isn't a game cache (no main_file_cache.dat2)");

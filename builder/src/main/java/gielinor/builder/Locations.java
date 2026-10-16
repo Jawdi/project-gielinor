@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/** Where the game cache, Project Zomboid and Zomboid's mods folder usually live. */
+/** What a game cache folder holds, and where Project Zomboid and its mods folder usually live. */
 final class Locations {
     private Locations() {
     }
@@ -17,23 +17,6 @@ final class Locations {
     /** A folder holding an OSRS cache: `main_file_cache.dat2` and its index files. */
     static boolean isCache(File dir) {
         return new File(dir, "main_file_cache.dat2").isFile() && new File(dir, "main_file_cache.idx255").isFile();
-    }
-
-    /**
-     * The cache of an installed Old School RuneScape: RuneLite's, the official
-     * client's (under ProgramData or the user's home) or the older Java
-     * client's, whichever is found first.
-     */
-    static Optional<File> findCache() {
-        List<File> candidates = new ArrayList<>();
-        candidates.add(new File(home(), ".runelite/jagexcache/oldschool/LIVE"));
-        String programData = System.getenv("ProgramData");
-        if (programData != null) {
-            candidates.add(new File(programData, "Jagex/Old School RuneScape"));
-            candidates.add(new File(programData, "Jagex/oldschool"));
-        }
-        candidates.add(new File(home(), "jagexcache/oldschool/LIVE"));
-        return candidates.stream().filter(Locations::isCache).findFirst();
     }
 
     /** Project Zomboid's install folder, from Steam's usual library folders on any drive. */

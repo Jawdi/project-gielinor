@@ -7,21 +7,24 @@ character, survival mechanics, UI and zombies.
 ## How it's put together
 
 The mod ships only its own code. None of Jagex's assets are included or
-distributed. Instead, you build them yourself from your own Old School
-RuneScape installation:
+distributed. Instead, a builder makes them on your machine:
 
 1. **Project Gielinor** (Steam Workshop): the mod's Lua and scripts, the
    mechanics that tie Gielinor's content into Zomboid.
-2. **Project Gielinor Content Builder** (a separate download): reads the game
-   cache of your installed Old School RuneScape and writes a local content
-   pack (item names, icons, models and so on) into your Zomboid mods folder.
-   The Workshop mod requires that pack.
+2. **Project Gielinor Content Builder** (a separate download): writes a local
+   content pack (items, icons, models, zombies and so on) into your Zomboid
+   mods folder. The Workshop mod requires that pack.
+
+The builder always builds from the same version of the game, so every player
+and every multiplayer server gets the same items and world. It fetches that
+version (the game cache, about 190 MB, and the keys that unlock its map) once
+from the [OpenRS2 archive](https://archive.openrs2.org) and keeps it for later
+builds.
 
 ## Requirements
 
 - Project Zomboid, Build 42.
-- Old School RuneScape installed and run at least once, so its cache is on
-  your machine.
+- An internet connection the first time the builder runs.
 
 ## Building the content pack
 
@@ -31,52 +34,50 @@ The builder needs Java 21 and Gradle. From `builder/`:
 gradle run
 ```
 
-It finds the game cache of an installed Old School RuneScape (RuneLite's or
-the official client's) and Project Zomboid on its own, and writes the pack to
-`Zomboid/mods/ProjectGielinorContent`. To point it somewhere else:
+It finds Project Zomboid on its own and writes the pack to
+`Zomboid/mods/ProjectGielinorContent`. To point it somewhere else, or build
+from another cache:
 
 ```
 gradle run --args="--cache <cache folder> --zomboid <install folder> --out <pack folder>"
 ```
 
+Each build writes `item-report.txt` next to the pack, listing the items left
+out and why. `builder/src/main/resources/item-overrides.txt` keeps or drops
+items by name.
+
 The builder reads the cache with RuneLite's open-source cache library.
 
 ## What's in it so far
 
-- Items: every item in the game (bar noted, placeholder and duplicate
-  copies), about 12,000, with icons rendered from the game's own models,
-  names and weights. Each copies the vanilla Zomboid item that plays the same
-  part for its animations, sounds and held model: axes chop trees like
-  Zomboid's hatchet, with tree damage scaled from their strength bonus
-  (bronze 12, dragon 37, against the hatchet's 15); swords, daggers, maces,
-  spears, staves and two-handers fight like their Zomboid counterparts, with
-  damage scaled the same way. Food and drink can be eaten. Everything else is
-  carried, with no use yet.
-- Models: weapons are held as their own models, lined up like the Zomboid
-  weapon each copies so they sit in the hand the same way; everything else
-  lies on the ground (and shows in hand) as its own model. Faces keep the
-  game's flat colours.
-- Clothing and armour: every wearable item (helmets, capes, amulets, body
-  armour, legs, gloves, boots, rings) is Zomboid clothing, its worn model
-  fitted onto Zomboid's skeleton so it moves with the character. Armour
-  protects against bites and scratches by its defence bonuses (a rune
-  platebody about 57 out of 100).
-- Zombies: about four in five ordinary zombies are one of the game's 148
-  zombie looks (zombies, zombie monks, zombie pirates and more), each fitted
-  onto Zomboid's skeleton as a full-body piece so it moves with Zomboid's
-  zombie animations. About one in ten are the game's human-shaped monsters
-  instead: goblins, skeletons, guards, barbarians, dark wizards, pirates,
-  knights, ghouls, werewolves and more. Special places keep their own
-  zombies.
-- Your character: new characters are Gielinor folk, wearing the game's
-  default player body (male or female) as a full-body piece in its own slot
-  under all other clothing, with Zomboid's hair and beard taken off since the
-  head has its own.
-- Animals: Zomboid's cows, bulls and calves, chickens and roosters, sheep,
-  rams and lambs, pigs, boars and piglets, rabbits, rats, mice, raccoons and
-  bucks take the look of their Gielinor counterparts, each fitted onto the
-  Zomboid animal's own skeleton so its animations, behaviour and husbandry
-  carry on. Turkeys, chicks, does and fawns keep Zomboid's look.
+- Items: the game's items the mod has a use for, about 2,300: weapons, tools,
+  food, drink, clothing and armour, and the materials Zomboid's crafting or
+  the mod's skills use (ore, bars, logs, gems, herbs, seeds, hides, runes).
+  Quest and minigame items, burnt food, poisoned copies and kinds with no use
+  yet (ammunition, bows, shields, potions) are left out. Each item copies the
+  vanilla Zomboid item that plays the same part, so it works where that does:
+  axes chop trees (with tree damage scaled from their strength bonus), hammers
+  build, needles sew, buckets and jugs hold water, a jug of wine holds wine,
+  raw fish needs cooking. Weapons fight with damage scaled from their
+  strength bonus.
+- Loot: items turn up where Zomboid keeps its own of the same kind (axes with
+  tools, armour in wardrobes, ore with metal bars, food in kitchens), cheap
+  ones common and valuable ones rare, and zombies carry a few. Switches for
+  Gielinor's and Zomboid's items in loot are ready for sandbox options.
+- Models: everything keeps the game's own shape and flat colours. People
+  (your character, clothing, zombies, monsters) move on Zomboid's skeleton the
+  way the game animates them: each part of a model moves with one bone.
+- Clothing and armour: every wearable is Zomboid clothing. Armour protects
+  against bites and scratches by its defence bonuses (a rune platebody about
+  57 out of 100). Helmets hide hair as they do in the game.
+- Your character: new characters are Gielinor folk, their body in six parts
+  (head, torso, arms, hands, legs, feet) that clothing replaces as the game's
+  equipment does: a platebody hides the torso and arms.
+- Zombies: every zombie is one of the game's zombie looks, or now and then
+  one of its human-shaped monsters (goblins, skeletons, guards, barbarians,
+  pirates, knights, ghouls and more).
+- Animals: Zomboid's cows, chickens, sheep, pigs, rabbits, rats, mice,
+  raccoons and deer take the look of their Gielinor counterparts.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

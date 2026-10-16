@@ -161,16 +161,20 @@ final class GielinorMap {
     }
 
     /**
-     * What the in-game map draws each ground as: the map styles' own
-     * features (water, roads, trails), keyed by the property each is drawn
-     * by. Grass is left as the map's plain background.
+     * What the in-game map draws each ground as, keyed by the property each
+     * is drawn by: water as Zomboid's rivers, the rest by the mod's own map
+     * layers (`gielinor` = stone, sand or dirt). Grass is left as the map's
+     * plain background. Zomboid's road layers won't do: it triangulates
+     * roads at six levels of detail, and a cell of the game's small patches
+     * of ground then overflows the 16-bit count of where each feature's
+     * triangles start, which crashes the map.
      */
     private static String[] mapFeature(GielinorTerrain.Ground g) {
         return switch (g) {
             case WATER -> new String[]{"water", "river"};
-            case STONE -> new String[]{"highway", "secondary"};
-            case SAND -> new String[]{"highway", "tertiary"};
-            case DIRT -> new String[]{"highway", "trail"};
+            case STONE -> new String[]{"gielinor", "stone"};
+            case SAND -> new String[]{"gielinor", "sand"};
+            case DIRT -> new String[]{"gielinor", "dirt"};
             default -> null;
         };
     }

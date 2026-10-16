@@ -126,7 +126,7 @@ final class HumanFit {
             // How a vertex shares its joints goes by where it was, before
             // the hands move to the grip, so the wrist bends as one.
             Bound shared = blendAtJoints(p, bone);
-            if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
+            if (isArm(bone)) {
                 p = toGrip(p, bone);
             }
             out[i] = new Bound(p, shared.bones(), shared.weights());
@@ -179,30 +179,26 @@ final class HumanFit {
     void bodyType(int type) {
         toGrip = TO_GRIP[type >= 0 && type < 2 ? type : 2];
     }
-    /**
-     * How far down the forearm (as a share of Zomboid's) the game's forearm
-     * moves as far as its hand: some of the game's forearms end short of
-     * Zomboid's wrist, and would part from the moved hand.
-     */
-    private static final double FOREARM_FULL = 0.85;
+    /** Where Zomboid's animations hold items, in the bind pose: the right hand's grip, then the left's. */
+    private static final double[][] GRIP = {{-0.413, 0.710, 0.084}, {0.441, 0.688, 0.057}};
 
     /**
-     * A forearm or hand vertex moved towards the grip: a hand all the way,
-     * a forearm the more the nearer the wrist (all the way from
-     * {@link #FOREARM_FULL}), so it stretches from the elbow rather than
-     * parting from the hand.
+     * An arm vertex moved so the hand closes on the grip: the whole arm
+     * swings about the shoulder, and stretches along itself, until the
+     * hand's middle is there. Moved bodily instead, the hand would kink off
+     * the end of the forearm; swung about the elbow, the arm would bend there.
      */
     private double[] toGrip(double[] p, String bone) {
         String side = bone.contains("_L_") ? "L" : "R";
-        double[] shift = toGrip[side.equals("R") ? 0 : 1];
-        double share = 1;
-        if (bone.endsWith("_Forearm")) {
-            double[] elbow = skeleton.bind("Bip01_" + side + "_Forearm");
-            double[] forearm = ModelExporter.sub(skeleton.bind("Bip01_" + side + "_Hand"), elbow);
-            double t = ModelExporter.dot(ModelExporter.sub(p, elbow), forearm) / ModelExporter.dot(forearm, forearm);
-            share = Math.max(0, Math.min(1, t / FOREARM_FULL));
-        }
-        return ModelExporter.add(p, ModelExporter.scale(shift, share));
+        int i = side.equals("R") ? 0 : 1;
+        double[] shoulder = skeleton.bind("Bip01_" + side + "_UpperArm");
+        double[] to = ModelExporter.sub(GRIP[i], shoulder);
+        double[] from = ModelExporter.sub(to, toGrip[i]);
+        double[] along = unit(from);
+        double stretch = Math.sqrt(ModelExporter.dot(to, to) / ModelExporter.dot(from, from));
+        double[] q = ModelExporter.sub(p, shoulder);
+        q = ModelExporter.add(q, ModelExporter.scale(along, (stretch - 1) * ModelExporter.dot(q, along)));
+        return turn(ModelExporter.add(shoulder, q), rotation(along, unit(to)), shoulder);
     }
 
     /** How far from a joint (in metres) its two bones share a vertex: half each at the joint, none at this distance. */

@@ -11,7 +11,9 @@ import java.util.Random;
  * The Gielinor world as a standalone Zomboid map (`media/maps/Gielinor`),
  * laid out like the game's own standalone maps: its cells, `map.info` with no
  * `lots` line (so it isn't laid over Kentucky), `spawnpoints.lua` and
- * `objects.lua`. The mod starts it as a challenge; servers set `Map=Gielinor`.
+ * `objects.lua`. A map that isn't laid over another is a world of its own:
+ * Zomboid's World Select screen offers it beside Kentucky when a new game
+ * starts, and servers set `Map=Gielinor`.
  */
 final class GielinorMap {
     static final String FOLDER = "Gielinor";
@@ -25,6 +27,8 @@ final class GielinorMap {
      */
     static void write(Path media, TileDefinitions tiles) throws IOException {
         Path dir = media.resolve("maps").resolve(FOLDER);
+        // Cells from an earlier build mustn't linger.
+        deleteTree(dir);
         Files.createDirectories(dir);
         List<String> grass = tiles.floors("blends_natural_01", "Grass_Dark");
         if (grass.isEmpty()) {
@@ -48,6 +52,16 @@ final class GielinorMap {
         writeSpawnPoints(dir, middle, middle);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
         System.out.println("  map: 1 test cell");
+    }
+
+    private static void deleteTree(Path dir) throws IOException {
+        if (Files.exists(dir)) {
+            try (var walk = Files.walk(dir)) {
+                for (Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    Files.delete(p);
+                }
+            }
+        }
     }
 
     private static void writeInfo(Path dir) throws IOException {

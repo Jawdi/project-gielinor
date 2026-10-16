@@ -443,7 +443,9 @@ public final class Main {
         Files.writeString(media.resolve("scripts/gielinor_bodies.txt"), bodies(itemModels, media), StandardCharsets.UTF_8);
         Files.writeString(media.resolve("scripts/gielinor_animals.txt"), animals(npcs, itemModels, scripts, zomboid, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);
-        GielinorMap.write(media, TileDefinitions.read(zomboid.toPath()));
+        // Zomboid finds a mod's maps in its common folder (and only looks in
+        // the version folder if the common one has maps too).
+        GielinorMap.write(out.resolve("common/media"), TileDefinitions.read(zomboid.toPath()));
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         StringBuilder names = new StringBuilder("{\n");

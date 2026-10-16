@@ -123,10 +123,13 @@ final class HumanFit {
                 // Back from the model's pose into the bind pose.
                 p = turn(p, transpose(turns.get(limb)), joint(limb));
             }
-            if (bone.endsWith("_Hand")) {
-                p = reach(p, bone);
+            // How a vertex shares its joints goes by where it was, before
+            // the hands move to the grip, so the wrist bends as one.
+            Bound shared = blendAtJoints(p, bone);
+            if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
+                p = toGrip(p, bone);
             }
-            out[i] = blendAtJoints(p, bone);
+            out[i] = new Bound(p, shared.bones(), shared.weights());
             mesh.vertices.set(i, p);
         }
         return out;
@@ -155,28 +158,41 @@ final class HumanFit {
         Map.entry("Bip01_L_Foot", "Bip01_L_Calf"),
         Map.entry("Bip01_R_Foot", "Bip01_R_Calf"));
     /**
-     * How much further from the wrist (in metres) the game's hands are moved:
-     * Zomboid's hand reaches about 7 cm past the wrist at its middle, where
-     * it holds what's in it, and the game's about 2 to 4 cm, so held items
-     * hung below the game's fists. The wrist stretches to meet it.
+     * How far each hand is moved (in metres, the right then the left) so the
+     * game's fist closes where Zomboid holds things. Zomboid's animations keep
+     * a held item's bone (Bip01_Prop1 in the right hand, Bip01_Prop2 in the
+     * left) at a fixed point in the hand bone's frame, a few centimetres in
+     * front of Zomboid's open palm, where its fingers curl round the handle.
+     * The game's fists, fitted as they are, sit behind and above it, so
+     * items hung below them. These carry the middle of the game's hands (as
+     * the two body types fit, between them) onto that point.
      */
-    private static final double HAND_REACH = 0.045;
-
-    /** How far past the wrist a hand vertex is moved the whole {@link #HAND_REACH}; nearer, it's moved less. */
-    private static final double HAND_FULL_REACH = 0.03;
+    private static final double[] RIGHT_TO_GRIP = {-0.010, -0.027, 0.050};
+    private static final double[] LEFT_TO_GRIP = {0.038, -0.049, 0.022};
+    /**
+     * How far down the forearm (as a share of Zomboid's) the game's forearm
+     * moves as far as its hand: some of the game's forearms end short of
+     * Zomboid's wrist, and would part from the moved hand.
+     */
+    private static final double FOREARM_FULL = 0.85;
 
     /**
-     * A hand vertex moved further along its hand, away from the wrist: the
-     * whole {@link #HAND_REACH} from {@link #HAND_FULL_REACH} out, less
-     * nearer, none at the wrist, so the wrist stretches rather than parts.
+     * A forearm or hand vertex moved towards the grip: a hand all the way,
+     * a forearm the more the nearer the wrist (all the way from
+     * {@link #FOREARM_FULL}), so it stretches from the elbow rather than
+     * parting from the hand.
      */
-    private double[] reach(double[] p, String hand) {
-        String side = hand.contains("_L_") ? "L" : "R";
-        double[] wrist = skeleton.bind("Bip01_" + side + "_Hand");
-        double[] along = unit(ModelExporter.sub(wrist, skeleton.bind("Bip01_" + side + "_Forearm")));
-        double past = ModelExporter.dot(ModelExporter.sub(p, wrist), along);
-        double share = Math.max(0, Math.min(1, past / HAND_FULL_REACH));
-        return ModelExporter.add(p, ModelExporter.scale(along, HAND_REACH * share));
+    private double[] toGrip(double[] p, String bone) {
+        String side = bone.contains("_L_") ? "L" : "R";
+        double[] shift = side.equals("R") ? RIGHT_TO_GRIP : LEFT_TO_GRIP;
+        double share = 1;
+        if (bone.endsWith("_Forearm")) {
+            double[] elbow = skeleton.bind("Bip01_" + side + "_Forearm");
+            double[] forearm = ModelExporter.sub(skeleton.bind("Bip01_" + side + "_Hand"), elbow);
+            double t = ModelExporter.dot(ModelExporter.sub(p, elbow), forearm) / ModelExporter.dot(forearm, forearm);
+            share = Math.max(0, Math.min(1, t / FOREARM_FULL));
+        }
+        return ModelExporter.add(p, ModelExporter.scale(shift, share));
     }
 
     /** How far from a joint (in metres) its two bones share a vertex: half each at the joint, none at this distance. */
@@ -188,6 +204,12 @@ final class HumanFit {
      * and those where its children meet it.
      */
     private Bound blendAtJoints(double[] p, String bone) {
+        if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
+            Bound wrist = blendAtWrist(p, bone);
+            if (wrist != null) {
+                return wrist;
+            }
+        }
         List<String> bones = new ArrayList<>();
         List<Double> weights = new ArrayList<>();
         double others = 0;
@@ -218,6 +240,31 @@ final class HumanFit {
         bones.add(0, bone);
         weights.add(0, 1 - others);
         return new Bound(p, bones.toArray(new String[0]), weights.stream().mapToDouble(Double::doubleValue).toArray());
+    }
+
+    /** How far either side of the wrist (in metres, along the arm) the hand and forearm share a vertex. */
+    private static final double WRIST_REACH = 0.03;
+
+    /**
+     * A vertex near a wrist, shared between hand and forearm by how far
+     * along the arm it lies (half each at the wrist), or null if it isn't
+     * near one. The hand sits off the wrist's axis where it holds things, so
+     * the wrist bending swings it about; vertices either side of the seam
+     * between the game's forearm and hand must share alike, or the seam
+     * opens. By distance from the joint, they wouldn't.
+     */
+    private Bound blendAtWrist(double[] p, String bone) {
+        String side = bone.contains("_L_") ? "L" : "R";
+        String hand = "Bip01_" + side + "_Hand";
+        String forearm = "Bip01_" + side + "_Forearm";
+        double[] wrist = skeleton.bind(hand);
+        double[] along = unit(ModelExporter.sub(wrist, skeleton.bind(forearm)));
+        double d = ModelExporter.dot(ModelExporter.sub(p, wrist), along);
+        if (Math.abs(d) >= WRIST_REACH) {
+            return null;
+        }
+        double w = 0.5 + 0.5 * d / WRIST_REACH;
+        return new Bound(p, new String[]{hand, forearm}, new double[]{w, 1 - w});
     }
 
     /**

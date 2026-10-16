@@ -227,7 +227,7 @@ final class ItemModels {
             return false;
         }
         String[] parts = bodyParts(part, bounds);
-        pushAlongSurface(part, push);
+        pushAlongSurface(part, push, bounds);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Files.createDirectories(meshDir);
         part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png",
@@ -242,6 +242,8 @@ final class ItemModels {
 
     /** What a {@link FaceColour} gives a garment's bare skin, which goes to a body piece of its own. */
     static final int GARMENT_SKIN = -2;
+    /** How far (in metres) inside a garment the skin under it lies. */
+    private static final double LINING_IN = 0.004;
 
     /**
      * Writes a garment (a top, trousers, shoes) made of the game's identity
@@ -252,7 +254,8 @@ final class ItemModels {
      * in for). `colour` colours its faces, giving {@link #GARMENT_SKIN} for
      * bare skin: that's written as the body piece `skinName` in `skin`'s
      * colours, worn with the garment, so the garment's own textures needn't
-     * come in every skin. Returns whether the garment has any cloth.
+     * come in every skin. The piece also carries the skin under the cloth,
+     * which shows through tears. Returns whether the garment has any cloth.
      */
     boolean exportGarment(String name, String skinName, int[] kits, double crown, double push, FaceColour colour,
             int[][] choices, SharedPalette skin, int skinChoices, Path media) throws IOException {
@@ -295,7 +298,7 @@ final class ItemModels {
         Files.createDirectories(meshDir);
         Files.createDirectories(textureDir);
         GarmentLayout layout = new GarmentLayout(skeleton, cloth);
-        pushAlongSurface(cloth, push);
+        pushAlongSurface(cloth, push, bounds);
         cloth.writeSkinnedX(meshDir.resolve(name + ".X"), name, "x.png", layout::uv, skeleton, bounds);
         java.util.List<String> textures = new java.util.ArrayList<>();
         for (int i = 0; i < choices.length; i++) {
@@ -308,11 +311,33 @@ final class ItemModels {
             textures.add("garments\\" + name + "_" + i);
         }
         writeClothingDefinition(name, java.util.List.of(), null, false, textures, media);
-        if (!bare.faces.isEmpty()) {
-            String[] parts = bodyParts(bare, bounds);
-            pushAlongSurface(bare, push);
+        // The skin under the cloth, which shows where the cloth tears (as
+        // Zomboid's body does under its clothes): the cloth again, a little
+        // inside it. It goes with the bare skin, which never tears.
+        Mesh lining = new Mesh();
+        for (double[] v : cloth.vertices) {
+            lining.vertices.add(v.clone());
+        }
+        for (int f = 0; f < cloth.faces.size(); f++) {
+            lining.faces.add(cloth.faces.get(f));
+            lining.colours.add(SharedPalette.shade(0));
+        }
+        pushAlongSurface(lining, -push - LINING_IN, bounds);
+        pushAlongSurface(bare, push, bounds);
+        int offset = bare.vertices.size();
+        bare.vertices.addAll(lining.vertices);
+        for (int f = 0; f < lining.faces.size(); f++) {
+            int[] face = lining.faces.get(f);
+            bare.faces.add(new int[]{face[0] + offset, face[1] + offset, face[2] + offset});
+            bare.colours.add(lining.colours.get(f));
+        }
+        Bound[] bareBounds = new Bound[bounds.length * 2];
+        System.arraycopy(bounds, 0, bareBounds, 0, bounds.length);
+        System.arraycopy(bounds, 0, bareBounds, bounds.length, bounds.length);
+        {
+            String[] parts = bodyParts(bare, bareBounds);
             bare.writeSkinnedX(meshDir.resolve(skinName + ".X"), skinName, skin.name() + "_0.png",
-                (face, corner) -> skin.uv(parts[face], bare.colours.get(face), face, corner), skeleton, bounds);
+                (face, corner) -> skin.uv(parts[face], bare.colours.get(face), face, corner), skeleton, bareBounds);
             java.util.List<String> skinTextures = new java.util.ArrayList<>();
             for (int i = 0; i < skinChoices; i++) {
                 skinTextures.add(skin.name() + "_" + i);
@@ -433,8 +458,34 @@ final class ItemModels {
         return out;
     }
 
-    /** Moves each vertex `distance` along its faces' average outward normal. */
-    private void pushAlongSurface(Mesh mesh, double distance) {
+    /**
+     * The way along a limb bone, from its joint towards its child's, or null
+     * for the body, head and feet.
+     */
+    private double[] limbAxis(String bone) {
+        String side = bone.contains("_L_") ? "_L_" : bone.contains("_R_") ? "_R_" : null;
+        if (side == null) {
+            return null;
+        }
+        String[] from = bone.endsWith("UpperArm") ? new String[]{"UpperArm", "Forearm"}
+            : bone.endsWith("Forearm") || bone.endsWith("Hand") ? new String[]{"Forearm", "Hand"}
+            : bone.endsWith("Thigh") ? new String[]{"Thigh", "Calf"}
+            : bone.endsWith("Calf") ? new String[]{"Calf", "Foot"}
+            : null;
+        if (from == null) {
+            return null;
+        }
+        double[] axis = ModelExporter.sub(skeleton.bind("Bip01" + side + from[1]), skeleton.bind("Bip01" + side + from[0]));
+        double length = Math.sqrt(ModelExporter.dot(axis, axis));
+        return ModelExporter.scale(axis, 1 / length);
+    }
+
+    /**
+     * Moves each vertex `distance` along its faces' average outward normal
+     * (across its limb only, for a limb's vertex; `bounds` gives each
+     * vertex's bones).
+     */
+    private void pushAlongSurface(Mesh mesh, double distance, Bound[] bounds) {
         if (distance == 0) {
             return;
         }
@@ -452,6 +503,13 @@ final class ItemModels {
         }
         for (int v = 0; v < mesh.vertices.size(); v++) {
             double[] n = sums[v];
+            // A limb moves only across itself: the game's limbs are blocks
+            // meeting end to end at the joints, and pushed along the limb
+            // too, their ends would part there.
+            double[] axis = limbAxis(bounds[v].bones()[0]);
+            if (axis != null) {
+                n = ModelExporter.sub(n, ModelExporter.scale(axis, ModelExporter.dot(n, axis)));
+            }
             double len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
             if (len == 0) {
                 continue;

@@ -94,6 +94,11 @@ local function makeGielinor(zombie)
         GielinorBody.cover(covered, itemVisuals:get(i):getItemType())
     end
     GielinorBody.layBody(visual, look, covered)
+    local worn = {}
+    for i = 0, itemVisuals:size() - 1 do
+        table.insert(worn, {itemVisuals:get(i):getItemType(), itemVisuals:get(i)})
+    end
+    GielinorBody.fitClothes(visual, worn)
     zombie:resetModelNextFrame()
 end
 

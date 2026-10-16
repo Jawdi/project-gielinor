@@ -32,6 +32,8 @@ final class Mesh {
      * such as an upper arm or a shin. Empty for meshes not read from the game.
      */
     final List<Integer> groups = new ArrayList<>();
+    /** Each vertex's texture coordinates, for meshes read with them (Zomboid's body). */
+    final List<double[]> uvs = new ArrayList<>();
     /**
      * Whether the mesh is written smooth shaded (each corner's normal the
      * average of the faces meeting there) rather than flat as the game draws
@@ -64,6 +66,17 @@ final class Mesh {
                 for (int k = 1; k + 1 < idx.length; k++) {
                     mesh.faces.add(new int[]{Integer.parseInt(idx[0]), Integer.parseInt(idx[k]), Integer.parseInt(idx[k + 1])});
                 }
+            }
+        }
+        // And each vertex's texture coordinates, if the mesh has them.
+        Matcher coords = Pattern.compile("MeshTextureCoords[^{]*\\{\\s*(\\d+);").matcher(text);
+        coords.region(header.end(), text.length());
+        if (coords.find()) {
+            int n = Integer.parseInt(coords.group(1));
+            Matcher uv = Pattern.compile("(-?[\\d.]+(?:e-?\\d+)?);\\s*(-?[\\d.]+(?:e-?\\d+)?);[,;]").matcher(text);
+            uv.region(coords.end(), text.length());
+            while (mesh.uvs.size() < n && uv.find()) {
+                mesh.uvs.add(new double[]{Double.parseDouble(uv.group(1)), Double.parseDouble(uv.group(2))});
             }
         }
         return mesh;

@@ -29,6 +29,8 @@ final class Skeleton {
     final List<double[]> bodyVertices;
     /** The body's triangles, as indices into {@link #bodyVertices}. */
     final List<int[]> bodyFaces;
+    /** Each body vertex's texture coordinates: where on Zomboid's body texture (and its masks) it is. */
+    final List<double[]> bodyUvs;
     /** How strongly each bone moves each body vertex, as the body's own skin has it. */
     final List<Map<String, Double>> bodyWeights = new ArrayList<>();
     /** Each frame's parent frame, from the frame hierarchy. */
@@ -38,6 +40,7 @@ final class Skeleton {
         this.header = header;
         this.bodyVertices = body.vertices;
         this.bodyFaces = body.faces;
+        this.bodyUvs = body.uvs;
         for (int i = 0; i < body.vertices.size(); i++) {
             bodyWeights.add(new LinkedHashMap<>());
         }

@@ -156,9 +156,8 @@ final class Wardrobe {
         Path masks = zomboid.resolve("media/textures/BloodTextures");
         SharedPalette skin = new SharedPalette("GielinorSkin", 1, masks);
         SharedPalette hair = new SharedPalette("GielinorHair", 2, masks);
-        SharedPalette tops = new SharedPalette("GielinorTop", 3, masks);
-        SharedPalette legs = new SharedPalette("GielinorLegs", 2, masks);
-        SharedPalette feet = new SharedPalette("GielinorFeet", 2, masks);
+        // Each garment's bare skin, worn as a body piece with it.
+        StringBuilder bare = new StringBuilder();
 
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         Map<Integer, List<KitDefinition>> byPart = new LinkedHashMap<>();
@@ -273,8 +272,7 @@ final class Wardrobe {
                 for (int sleeves : sleeveIds) {
                     String name = "GielinorTop_" + torso.getId() + "_" + sleeves;
                     int[] kits = sleeves == 0 ? new int[]{torso.getId()} : new int[]{torso.getId(), sleeves};
-                    if (models.exportWardrobe(name, kits, crown, CLOTHES_OUT, tops, TORSO.offered * SKIN.offered,
-                            (source, rgb, height, across) -> clothing(source, rgb, TORSO), media)) {
+                    if (garment(models, name, kits, crown, CLOTHES_OUT, TORSO, skin, script, bare, media)) {
                         String style = STYLE_NAMES.getOrDefault(torso.getId(), type == 0 ? "Shirt" : "Top");
                         String topName = sleeves == 0 ? "Sleeveless " + style.toLowerCase() : style;
                         script.append(item(name, topName, sleeves == 0 ? CLOTHES_VEST : CLOTHES_TOP));
@@ -291,14 +289,7 @@ final class Wardrobe {
             for (KitDefinition kit : byPart.getOrDefault(base + LEGS_PART, List.of())) {
                 String name = "GielinorTrousers_" + kit.getId();
                 LegShape shape = new LegShape();
-                if (models.exportWardrobe(name, new int[]{kit.getId()}, crown, CLOTHES_OUT, legs, LEGS.offered * SKIN.offered,
-                        (source, rgb, height, across) -> {
-                            int c = clothing(source, rgb, LEGS);
-                            if (source != SKIN.source) {
-                                shape.see(height, across);
-                            }
-                            return c;
-                        }, media)) {
+                if (garment(models, name, new int[]{kit.getId()}, crown, CLOTHES_OUT, LEGS, skin, script, bare, media, shape)) {
                     script.append(item(name, STYLE_NAMES.getOrDefault(kit.getId(), shape.name()), CLOTHES_TROUSERS));
                     lua.append("            { kit = ").append(kit.getId()).append(", item = \"").append(MODULE).append('.').append(name).append("\" },\n");
                     counted++;
@@ -310,8 +301,7 @@ final class Wardrobe {
                 String name = "GielinorShoes_" + kit.getId();
                 // The game's two styles, basic and elven, in that order.
                 String shoeName = shoes.indexOf(kit) == 0 ? "Boots" : "Elven boots";
-                if (models.exportWardrobe(name, new int[]{kit.getId()}, crown, CLOTHES_OUT + 0.002, feet, FEET.offered * SKIN.offered,
-                        (source, rgb, height, across) -> clothing(source, rgb, FEET), media)) {
+                if (garment(models, name, new int[]{kit.getId()}, crown, CLOTHES_OUT + 0.002, FEET, skin, script, bare, media)) {
                     script.append(item(name, shoeName, CLOTHES_SHOES));
                     lua.append("            { kit = ").append(kit.getId()).append(", item = \"").append(MODULE).append('.').append(name).append("\" },\n");
                     counted++;
@@ -335,6 +325,7 @@ final class Wardrobe {
 
         // The colours as the game's client shows them: each choice's colour
         // and its second shade (the first again where there's none).
+        lua.append("    bare = {\n").append(bare).append("    },\n");
         lua.append("    skins = ").append(SKIN.offered).append(",\n");
         lua.append("    colours = {\n");
         for (BodyColour colour : COLOURS) {
@@ -355,9 +346,6 @@ final class Wardrobe {
         Files.createDirectories(textures);
         writeChoices(skin, SKIN, textures);
         writeChoices(hair, HAIR, textures);
-        writeClothingChoices(tops, TORSO, textures);
-        writeClothingChoices(legs, LEGS, textures);
-        writeClothingChoices(feet, FEET, textures);
         System.out.println("  wardrobe: " + counted + " pieces");
         return script.append("}\n").toString();
     }
@@ -368,20 +356,39 @@ final class Wardrobe {
         }
     }
 
+    private static boolean garment(ItemModels models, String name, int[] kits, double crown, double push, BodyColour colour,
+            SharedPalette skin, StringBuilder script, StringBuilder bare, Path media) throws IOException {
+        return garment(models, name, kits, crown, push, colour, skin, script, bare, media, null);
+    }
+
     /**
-     * A kind of clothes' textures: one for each colour and skin, choice
-     * `colour * skins + skin`, the colour's shades first and the skin after.
+     * Writes a garment in each of `colour`'s choices (see
+     * {@link ItemModels#exportGarment}), its bare skin as a body piece, and
+     * notes the piece in `bare` and its item in `script`. `shape`, if given,
+     * sees where its cloth reaches. Returns whether it has any cloth.
      */
-    private static void writeClothingChoices(SharedPalette palette, BodyColour colour, Path dir) throws IOException {
-        int skins = SKIN.offered;
-        for (int c = 0; c < colour.offered(); c++) {
-            int[] shades = colour.shades(c);
-            for (int k = 0; k < skins; k++) {
-                int skinShade = SKIN.shades(k)[0];
-                int[] all = colour.secondSource() >= 0 ? new int[]{shades[0], shades[1], skinShade} : new int[]{shades[0], skinShade};
-                palette.write(dir.resolve(palette.name() + "_" + (c * skins + k) + ".png"), all);
-            }
+    private static boolean garment(ItemModels models, String name, int[] kits, double crown, double push, BodyColour colour,
+            SharedPalette skin, StringBuilder script, StringBuilder bare, Path media, LegShape shape) throws IOException {
+        int[][] choices = new int[colour.offered()][];
+        for (int i = 0; i < choices.length; i++) {
+            choices[i] = colour.shades(i);
         }
+        String skinName = name.replaceFirst("_", "Bare_");
+        boolean written = models.exportGarment(name, skinName, kits, crown, push, (source, rgb, height, across) -> {
+            if (source == SKIN.source) {
+                return ItemModels.GARMENT_SKIN;
+            }
+            if (shape != null) {
+                shape.see(height, across);
+            }
+            return clothing(source, rgb, colour);
+        }, choices, skin, SKIN.offered, media);
+        if (written && models.wroteSkin(skinName, media)) {
+            script.append(item(skinName, "Gielinor body", null));
+            bare.append("        [\"").append(MODULE).append('.').append(name).append("\"] = \"")
+                .append(MODULE).append('.').append(skinName).append("\",\n");
+        }
+        return written;
     }
 
     /**
@@ -422,14 +429,8 @@ final class Wardrobe {
         return source == HAIR.source ? SharedPalette.shade(0) : source == HAIR.secondSource ? SharedPalette.shade(1) : -1;
     }
 
-    /**
-     * A clothing face: the chosen colour's shades, the kit's skin (in the
-     * shade after them, the wearer's skin), and the kit's own colours.
-     */
+    /** A clothing face: the chosen colour's shades, and the kit's own colours. */
     private static int clothing(int source, int rgb, BodyColour colour) {
-        if (source == SKIN.source) {
-            return SharedPalette.shade(colour.secondSource() >= 0 ? 2 : 1);
-        }
         if (source == colour.source) {
             return SharedPalette.shade(0);
         }

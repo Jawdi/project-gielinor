@@ -8,9 +8,10 @@
 --
 -- As Zomboid's clothing masks the body it covers, Gielinor clothes take the
 -- place of the body regions they cover (a top the torso and arms, a
--- sleeveless one the torso, trousers the legs, shoes the feet): the clothes
--- carry their own bare skin, in the wearer's skin colour, so nothing beneath
--- pokes through.
+-- sleeveless one the torso, trousers the legs, shoes the feet), so nothing
+-- beneath pokes through. What a garment leaves bare (a forearm below a short
+-- sleeve, a neckline) is a body piece of its own, worn with it in the
+-- wearer's skin (GielinorKits.bare).
 --
 -- A look is what the game's character designer picks:
 -- { type = "A" or "B", kits = { hair, jaw, torso, arms, legs, feet = kit id },
@@ -18,8 +19,7 @@
 -- A clothing kit left out is none: no torso no top, no arms a sleeveless
 -- top, no legs no trousers, no feet no shoes. The hair and jaw are always
 -- there: the jaw is the lower half of the face (a beard is drawn on it).
--- A body piece's texture choice (counting from 0) is its colour; a clothing
--- piece's is its colour and skin, colour * GielinorKits.skins + skin.
+-- A piece's texture choice (counting from 0) is its colour.
 
 require "Gielinor_Kits"
 
@@ -45,7 +45,7 @@ local BODY_PREFIX = "Gielinor.GielinorBody"
 --- Whether the content pack has Gielinor bodies to make anyone of.
 function GielinorBody.available()
     return GielinorKits ~= nil and GielinorKits.A ~= nil and type(GielinorKits.A.body) == "table"
-        and GielinorKits.colours ~= nil and GielinorKits.skins ~= nil
+        and GielinorKits.colours ~= nil and GielinorKits.bare ~= nil
 end
 
 --- A body type's default look.
@@ -144,9 +144,8 @@ end
 --- The clothes a look wears: { item type, texture choice }.
 function GielinorBody.clothes(look)
     local kits = GielinorKits[look.type]
-    local skin = (look.colours.skin or 1) - 1
     local function choice(key)
-        return ((look.colours[key] or 1) - 1) * GielinorKits.skins + skin
+        return (look.colours[key] or 1) - 1
     end
     local out = {}
     local top = look.kits.torso and kits.tops[look.kits.torso .. "_" .. (look.kits.arms or 0)]
@@ -204,8 +203,9 @@ function GielinorBody.bodyOf(visual)
 end
 
 --- Shows or hides a Gielinor body's regions to suit what it wears, and
---- gives the Gielinor clothes it wears its skin. `worn` lists what it wears
---- as { item type, item visual }. Returns whether anything changed.
+--- gives it the bare skin of the Gielinor clothes it wears (and only theirs).
+--- `worn` lists what it wears as { item type, item visual }. Returns whether
+--- anything changed.
 function GielinorBody.fitClothes(visual, worn)
     local type, skin = GielinorBody.bodyOf(visual)
     if not type then
@@ -214,15 +214,36 @@ function GielinorBody.fitClothes(visual, worn)
     skin = math.max(skin or 0, 0)
     local changed = false
     local covered = {}
+    local bare = {}
     for _, w in ipairs(worn) do
         if GielinorBody.clothingKind(w[1]) then
             GielinorBody.cover(covered, w[1])
-            local choice = w[2]:getTextureChoice()
-            local fitted = math.floor(math.max(choice, 0) / GielinorKits.skins) * GielinorKits.skins + skin
-            if choice ~= fitted then
-                w[2]:setTextureChoice(fitted)
-                changed = true
+            local piece = GielinorKits.bare[w[1]]
+            if piece then
+                bare[piece] = true
             end
+        end
+    end
+    -- The bare skin of clothes no longer worn goes, that of clothes worn comes.
+    local body = visual:getBodyVisuals()
+    local gone = {}
+    for i = 0, body:size() - 1 do
+        local itemType = body:get(i):getItemType()
+        if itemType and string.find(itemType, "Bare_", 1, true) and not bare[itemType] then
+            table.insert(gone, itemType)
+        end
+    end
+    for _, itemType in ipairs(gone) do
+        visual:removeBodyVisualFromItemType(itemType)
+        changed = true
+    end
+    for itemType in pairs(bare) do
+        if not visual:hasBodyVisualFromItemType(itemType) then
+            local added = visual:addBodyVisualFromItemType(itemType)
+            if added then
+                added:setTextureChoice(skin)
+            end
+            changed = true
         end
     end
     local regions = GielinorKits[type].body
@@ -284,7 +305,7 @@ function GielinorBody.nameClothes(item)
     if not kind or not item:getVisual() then
         return
     end
-    local colour = math.floor(math.max(item:getVisual():getTextureChoice(), 0) / GielinorKits.skins) + 1
+    local colour = math.max(item:getVisual():getTextureChoice(), 0) + 1
     local name = COLOUR_NAMES[kind][colour]
     if name then
         item:setName(name .. " " .. string.lower(item:getScriptItem():getDisplayName()))
@@ -320,6 +341,7 @@ function GielinorBody.dressDescription(desc, look)
     desc:getWornItems():clear()
     wearClothes(desc, look, instanceItem)
     GielinorBody.layBody(desc:getHumanVisual(), look, coveredByLook(look))
+    GielinorBody.fitClothes(desc:getHumanVisual(), GielinorBody.wornBy(desc))
 end
 
 --- Makes a character of a look (their body type's default if none): its
@@ -344,6 +366,7 @@ function GielinorBody.dress(character, look)
         return inventory:AddItem(fullType)
     end)
     GielinorBody.layBody(character:getHumanVisual(), look, coveredByLook(look))
+    GielinorBody.fitClothes(character:getHumanVisual(), GielinorBody.wornBy(character))
     character:resetModel()
 end
 

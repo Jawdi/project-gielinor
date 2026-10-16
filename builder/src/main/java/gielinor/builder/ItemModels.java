@@ -240,6 +240,93 @@ final class ItemModels {
         return true;
     }
 
+    /** What a {@link FaceColour} gives a garment's bare skin, which goes to a body piece of its own. */
+    static final int GARMENT_SKIN = -2;
+
+    /**
+     * Writes a garment (a top, trousers, shoes) made of the game's identity
+     * kits, as Zomboid's clothes are made: its texture laid out as Zomboid's
+     * body texture is (see {@link GarmentLayout}), so blood, dirt and holes
+     * fall on it as on Zomboid's, one texture for each of the colours in
+     * `choices` (each a list of the shades {@link SharedPalette#shade} stands
+     * in for). `colour` colours its faces, giving {@link #GARMENT_SKIN} for
+     * bare skin: that's written as the body piece `skinName` in `skin`'s
+     * colours, worn with the garment, so the garment's own textures needn't
+     * come in every skin. Returns whether the garment has any cloth.
+     */
+    boolean exportGarment(String name, String skinName, int[] kits, double crown, double push, FaceColour colour,
+            int[][] choices, SharedPalette skin, int skinChoices, Path media) throws IOException {
+        java.util.List<Integer> models = new java.util.ArrayList<>();
+        for (int kit : kits) {
+            for (int m : exporter.kitModels(kit)) {
+                models.add(m);
+            }
+        }
+        Mesh mesh = merged(models.stream().mapToInt(Integer::intValue).toArray(), null, null, null);
+        if (mesh.faces.isEmpty()) {
+            return false;
+        }
+        Bound[] bounds = fitted(mesh, crown, false, true);
+        Mesh cloth = new Mesh();
+        Mesh bare = new Mesh();
+        for (double[] v : mesh.vertices) {
+            cloth.vertices.add(v.clone());
+            bare.vertices.add(v.clone());
+        }
+        for (int f = 0; f < mesh.faces.size(); f++) {
+            double height = 0;
+            double across = 0;
+            for (int v : mesh.faces.get(f)) {
+                height += mesh.vertices.get(v)[1] / 3;
+                across += Math.abs(mesh.vertices.get(v)[0]) / 3;
+            }
+            int c = colour.of(mesh.sourceColours.get(f), mesh.colours.get(f), height, across);
+            Mesh into = c == GARMENT_SKIN ? bare : c >= 0 ? cloth : null;
+            if (into != null) {
+                into.faces.add(mesh.faces.get(f));
+                into.colours.add(c == GARMENT_SKIN ? SharedPalette.shade(0) : c);
+            }
+        }
+        if (cloth.faces.isEmpty()) {
+            return false;
+        }
+        Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
+        Path textureDir = media.resolve("textures/Clothes/Gielinor/Garments");
+        Files.createDirectories(meshDir);
+        Files.createDirectories(textureDir);
+        GarmentLayout layout = new GarmentLayout(skeleton, cloth);
+        pushAlongSurface(cloth, push);
+        cloth.writeSkinnedX(meshDir.resolve(name + ".X"), name, "x.png", layout::uv, skeleton, bounds);
+        java.util.List<String> textures = new java.util.ArrayList<>();
+        for (int i = 0; i < choices.length; i++) {
+            int[] shades = choices[i];
+            layout.paint(textureDir.resolve(name + "_" + i + ".png"), f -> {
+                int rgb = cloth.colours.get(f) & 0xffffff;
+                int shade = rgb - SharedPalette.shade(0);
+                return shade >= 0 && shade < shades.length ? shades[shade] : rgb;
+            });
+            textures.add("garments\\" + name + "_" + i);
+        }
+        writeClothingDefinition(name, java.util.List.of(), null, false, textures, media);
+        if (!bare.faces.isEmpty()) {
+            String[] parts = bodyParts(bare, bounds);
+            pushAlongSurface(bare, push);
+            bare.writeSkinnedX(meshDir.resolve(skinName + ".X"), skinName, skin.name() + "_0.png",
+                (face, corner) -> skin.uv(parts[face], bare.colours.get(face), face, corner), skeleton, bounds);
+            java.util.List<String> skinTextures = new java.util.ArrayList<>();
+            for (int i = 0; i < skinChoices; i++) {
+                skinTextures.add(skin.name() + "_" + i);
+            }
+            writeClothingDefinition(skinName, java.util.List.of(), null, false, skinTextures, media);
+        }
+        return true;
+    }
+
+    /** Whether {@link #exportGarment} wrote a bare-skin piece for the garment it last wrote. */
+    boolean wroteSkin(String skinName, Path media) {
+        return Files.exists(media.resolve("models_X/Skinned/Clothes/Gielinor/" + skinName + ".X"));
+    }
+
     /**
      * Cuts every face crossing the height `y` into a face on one side and two
      * on the other, keeping each face's winding and colours. A new vertex

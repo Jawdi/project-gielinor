@@ -37,7 +37,7 @@ public final class Main {
     /** The script module the items go in: `Gielinor.BronzeAxe`. */
     static final String MODULE = "Gielinor";
 
-    private record Built(ItemDefinition item, String type, ItemConverter.Role role, Map<String, String> properties,
+    private record Built(ItemDefinition item, String type, ItemConverter.Role role, String kind, Map<String, String> properties,
             List<ZomboidItems.Block> components) {
     }
 
@@ -82,19 +82,25 @@ public final class Main {
             items.load();
             IconRenderer icons = new IconRenderer(store, items);
             ItemModels itemModels = new ItemModels(new ModelExporter(store), scripts, zomboid);
-            List<Built> built = build(items, scripts.items());
+            List<Built> built = build(items, scripts.items(), out.toPath().resolve("item-report.txt"));
             NpcManager npcs = new NpcManager(store);
             npcs.load();
             writePack(out.toPath(), built, icons, itemModels, npcs, scripts, zomboid);
         }
     }
 
-    /** Every item worth having, once per name, lowest id first. */
-    private static List<Built> build(ItemManager items, Map<String, ZomboidItems.Block> templates) {
+    /**
+     * Every item the mod has a use for (see {@link ItemFilter}), once per
+     * name, lowest id first. Writes what was left out, and why, to
+     * `report`.
+     */
+    private static List<Built> build(ItemManager items, Map<String, ZomboidItems.Block> templates, Path report) throws IOException {
         List<ItemDefinition> all = new ArrayList<>(items.getItems());
         all.sort(Comparator.comparingInt(d -> d.id));
+        ItemFilter filter = new ItemFilter(all);
         Set<String> names = new HashSet<>();
         List<Built> out = new ArrayList<>();
+        Map<String, List<String>> dropped = new TreeMap<>();
         for (ItemDefinition d : all) {
             boolean variant = d.notedTemplate != -1 || d.placeholderTemplateId != -1 || d.boughtTemplateId != -1;
             if (variant || d.name == null || d.name.isBlank() || d.name.equals("null") || d.inventoryModel <= 0) {
@@ -103,13 +109,28 @@ public final class Main {
             if (!names.add(d.name.toLowerCase())) {
                 continue;
             }
-            String type = ItemConverter.typeName(d.name);
             ItemConverter.Role role = ItemConverter.roleOf(d);
+            String kind = ItemFilter.kindOf(d, role);
+            String reason = filter.reasonToDrop(d, kind);
+            if (reason != null) {
+                dropped.computeIfAbsent(reason, r -> new ArrayList<>()).add(d.name);
+                continue;
+            }
+            String type = ItemConverter.typeName(d.name);
             Map<String, String> props = ItemConverter.properties(d, type, role, templates);
             if (props != null) {
-                out.add(new Built(d, type, role, props, ItemConverter.components(d, role, templates)));
+                out.add(new Built(d, type, role, kind, props, ItemConverter.components(d, role, templates)));
             }
         }
+        StringBuilder text = new StringBuilder("Items left out of the content pack, by reason. Keep or drop any by name in\n"
+            + "builder/src/main/resources/item-overrides.txt.\n");
+        dropped.forEach((reason, list) -> {
+            System.out.println("  left out, " + reason + ": " + list.size());
+            text.append("\n").append(reason).append(" (").append(list.size()).append(")\n");
+            list.forEach(n -> text.append("  ").append(n).append("\n"));
+        });
+        Files.createDirectories(report.getParent());
+        Files.writeString(report, text, StandardCharsets.UTF_8);
         return out;
     }
 
@@ -315,19 +336,6 @@ public final class Main {
     }
 
     /**
-     * Kinds of plain items, by a whole word in their name (a word ending
-     * `*` matches any word starting so), first match wins: what the mod's
-     * loot rules sort them by.
-     */
-    private static final String[][] PLAIN_KINDS = {
-        {"ore", "ore"}, {"coal", "ore"}, {"bar", "bar"}, {"rune", "rune"}, {"seed", "seed"},
-        {"grimy", "herb"}, {"herb", "herb"}, {"logs", "logs"}, {"bones", "bones"}, {"coins", "coins"},
-        {"arrow*", "ammo"}, {"bolts", "ammo"}, {"dart", "ammo"}, {"bow", "ranged"}, {"crossbow", "ranged"},
-        {"shield", "shield"}, {"potion*", "potion"}, {"uncut", "gem"}, {"sapphire", "gem"}, {"emerald", "gem"},
-        {"ruby", "gem"}, {"diamond", "gem"},
-    };
-
-    /**
      * The loot list (`lua/shared/Gielinor_Loot.lua`): every tradeable item's
      * type, kind and value in coins, for the mod to place in Zomboid's loot
      * tables. Untradeable items are mostly quest and minigame pieces, which
@@ -341,33 +349,12 @@ public final class Main {
             if (!b.item.tradeable) {
                 continue;
             }
-            out.append("    {\"").append(b.type).append("\", \"").append(kindOf(b)).append("\", ")
+            out.append("    {\"").append(b.type).append("\", \"").append(b.kind).append("\", ")
                 .append(Math.max(b.item.cost, 1)).append("},\n");
             count++;
         }
         System.out.println("  loot list: " + count + " items");
         return out.append("}\n").toString();
-    }
-
-    /** An item's kind for the loot rules: its role, a worn item's slot, or a plain item's sort. */
-    private static String kindOf(Built b) {
-        return switch (b.role) {
-            case WEAR -> "wear_" + ItemConverter.Slot.of(b.item.wearPos1).name().toLowerCase();
-            case PLAIN -> {
-                List<String> words = List.of(b.item.name.toLowerCase().split("[^a-z]+"));
-                for (String[] k : PLAIN_KINDS) {
-                    boolean prefix = k[0].endsWith("*");
-                    String word = prefix ? k[0].substring(0, k[0].length() - 1) : k[0];
-                    if (words.stream().anyMatch(w -> prefix ? w.startsWith(word) : w.equals(word))) {
-                        yield k[1];
-                    }
-                }
-                yield "misc";
-            }
-            // Potions are drunk, but kept with medicine, not in the fridge.
-            case DRINK -> b.item.name.toLowerCase().contains("potion") || b.item.name.matches(".*\\(\\d\\)$") ? "potion" : "drink";
-            default -> b.role.name().toLowerCase();
-        };
     }
 
     /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
@@ -447,7 +434,7 @@ public final class Main {
                     groundCount++;
                 }
             }
-            kept.add(new Built(b.item, type, b.role, props, b.components));
+            kept.add(new Built(b.item, type, b.role, b.kind, props, b.components));
         }
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);

@@ -84,7 +84,9 @@ final class ItemConverter {
         Map.entry("jug of water", "WaterBottle"),
         Map.entry("vial", "WaterBottle"),
         Map.entry("vial of water", "WaterBottle"),
-        Map.entry("empty cup", "Teacup"));
+        Map.entry("empty cup", "Teacup"),
+        Map.entry("gardening trowel", "HandShovel"),
+        Map.entry("fishing bait", "BaitFish"));
 
     /**
      * The liquid an item holds, by a word in its name, first match wins

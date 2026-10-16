@@ -1,0 +1,8 @@
+# Items to build or leave out regardless of the builder's rules, one a line,
+# by the name the game gives them (any case):
+#
+#   keep: Bucket of sand
+#   drop: Bronze dagger
+#
+# Each build writes item-report.txt next to the content pack, listing every
+# item left out and why.

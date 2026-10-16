@@ -283,60 +283,111 @@ public final class Main {
     }
 
     /**
-     * The parts of a Gielinor body, as the game builds the player from
-     * identity kits: each part's slot (`gielinor:<part>`), its male and female
-     * kits, and the parts of Zomboid's body it hides. Separate parts let
-     * clothing replace them as the game's equipment does: a platebody hides
-     * the torso and arms, platelegs the legs.
+     * A part of a Gielinor body as the game's character designer offers it:
+     * its name (and slot, `gielinor:<name>`), the game's number for it on
+     * body type A (body type B's is 7 more), the colour the player's chosen
+     * colour (hair, clothing or shoes) takes the place of (-1 for none), and
+     * the parts of Zomboid's body it hides. Separate parts let clothing
+     * replace them as the game's equipment does: a platebody hides the torso
+     * and arms, platelegs the legs.
      */
-    private static final String[][] BODY_PARTS = {
-        {"head", "0,10", "45", "0"},
-        {"torso", "18", "56", "1"},
-        {"arms", "26", "61", "3,5"},
-        {"hands", "33", "67", "4,6"},
-        {"legs", "36", "70", "2,7,9"},
-        {"feet", "42", "79", "8,10"},
+    private record BodyPart(String name, int part, int colourSource, List<Integer> masks) {
+    }
+
+    private static final List<BodyPart> BODY_PARTS = List.of(
+        new BodyPart("hair", 0, 6798, List.of(0)),
+        new BodyPart("jaw", 1, 6798, List.of()),
+        new BodyPart("torso", 2, 8741, List.of(1)),
+        new BodyPart("arms", 3, 8741, List.of(3, 5)),
+        new BodyPart("hands", 4, -1, List.of(4, 6)),
+        new BodyPart("legs", 5, 25238, List.of(2, 7, 9)),
+        new BodyPart("feet", 6, 4626, List.of(8, 10)));
+
+    /** Each body type's default look, by kit, in {@link #BODY_PARTS}' order (-1: none). */
+    private static final int[][] DEFAULT_KITS = {
+        {0, 10, 18, 26, 33, 36, 42},
+        {45, -1, 56, 61, 67, 70, 79},
     };
 
     /**
-     * The player's body, part by part (see {@link #BODY_PARTS}), as clothing
-     * items `GielinorBody<Male|Female>_<part>` for the mod to dress new
-     * characters in. Returns their item script.
+     * Every body part a player can choose (each of the game's selectable
+     * identity kits) as clothing items `GielinorKit<id>` plus each piece's
+     * suffix (see {@link ItemModels#exportKit}), and a list of them for the
+     * mod's character designer (`lua/shared/Gielinor_Kits.lua`). Returns
+     * their item script.
      */
     private static String bodies(ItemModels itemModels, Path media) throws IOException {
         StringBuilder script = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
-        for (String sex : new String[]{"Male", "Female"}) {
-            int column = sex.equals("Male") ? 1 : 2;
-            List<Integer> all = new ArrayList<>();
-            for (String[] part : BODY_PARTS) {
-                all.addAll(numbers(part[column]));
-            }
-            double crown = itemModels.kitCrown(all);
-            for (String[] part : BODY_PARTS) {
-                String name = "Gielinor_Body_" + sex + "_" + part[0];
-                if (!itemModels.exportKitPart(name, numbers(part[column]), crown, numbers(part[3]), media)) {
-                    continue;
+        StringBuilder lua = new StringBuilder("-- Written by the Project Gielinor Content Builder: the body parts a\n"
+            + "-- character can be made of, by body type (A and B) and part, each as the\n"
+            + "-- items of its pieces (fixed colours, skin, and the player's chosen\n"
+            + "-- colour), and each body type's default look.\n\nGielinorKits = {\n");
+        double[] crowns = new double[2];
+        for (int type = 0; type < 2; type++) {
+            List<Integer> defaults = new ArrayList<>();
+            for (int kit : DEFAULT_KITS[type]) {
+                if (kit >= 0) {
+                    defaults.add(kit);
                 }
-                script.append("\n    item GielinorBody").append(sex).append('_').append(part[0]).append("\n    {\n")
+            }
+            crowns[type] = itemModels.kitCrown(defaults);
+        }
+        java.util.Map<String, StringBuilder> parts = new java.util.LinkedHashMap<>();
+        int count = 0;
+        for (net.runelite.cache.definitions.KitDefinition kit : itemModels.selectableKits()) {
+            if (kit.bodyPartId < 0 || kit.bodyPartId >= 14) {
+                continue;
+            }
+            int type = kit.bodyPartId / 7;
+            BodyPart part = BODY_PARTS.get(kit.bodyPartId % 7);
+            String name = "Gielinor_Kit" + kit.getId();
+            java.util.Set<ItemModels.Piece> pieces = itemModels.exportKit(name, kit.getId(), part.colourSource, crowns[type], part.masks, media);
+            if (pieces.isEmpty()) {
+                continue;
+            }
+            StringBuilder entry = new StringBuilder("            { kit = " + kit.getId());
+            for (ItemModels.Piece piece : pieces) {
+                String item = "GielinorKit" + kit.getId() + piece.suffix;
+                String slot = "gielinor:" + part.name + (piece == ItemModels.Piece.FIXED ? "" : "_" + piece.name().toLowerCase());
+                script.append("\n    item ").append(item).append("\n    {\n")
                     .append("        DisplayCategory = Clothing,\n")
                     .append("        ItemType = base:clothing,\n")
-                    .append("        DisplayName = Gielinor ").append(part[0]).append(" (").append(sex.toLowerCase()).append("),\n")
+                    .append("        DisplayName = Gielinor ").append(part.name).append(",\n")
                     .append("        Icon = TshirtGeneric,\n")
                     .append("        Weight = 0.01,\n")
-                    .append("        BodyLocation = gielinor:").append(part[0]).append(",\n")
-                    .append("        ClothingItem = ").append(name).append(",\n")
+                    .append("        BodyLocation = ").append(slot).append(",\n")
+                    .append("        ClothingItem = ").append(name).append(piece.suffix).append(",\n")
                     .append("    }\n");
+                entry.append(", ").append(piece.name().toLowerCase()).append(" = \"").append(MODULE).append('.').append(item).append('"');
             }
+            parts.computeIfAbsent((type == 0 ? "A" : "B") + "." + part.name, k -> new StringBuilder())
+                .append(entry).append(" },\n");
+            count++;
         }
+        for (String type : new String[]{"A", "B"}) {
+            lua.append("    ").append(type).append(" = {\n");
+            for (BodyPart part : BODY_PARTS) {
+                StringBuilder entries = parts.get(type + "." + part.name);
+                lua.append("        ").append(part.name).append(" = {\n").append(entries == null ? "" : entries).append("        },\n");
+            }
+            lua.append("    },\n");
+        }
+        lua.append("    defaults = {\n");
+        for (int type = 0; type < 2; type++) {
+            lua.append("        ").append(type == 0 ? "A" : "B").append(" = {");
+            for (int p = 0; p < BODY_PARTS.size(); p++) {
+                if (DEFAULT_KITS[type][p] >= 0) {
+                    lua.append(' ').append(BODY_PARTS.get(p).name).append(" = ").append(DEFAULT_KITS[type][p]).append(',');
+                }
+            }
+            lua.append(" },\n");
+        }
+        lua.append("    },\n}\n");
+        Path file = media.resolve("lua/shared/Gielinor_Kits.lua");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, lua, StandardCharsets.UTF_8);
+        System.out.println("  body parts: " + count);
         return script.append("}\n").toString();
-    }
-
-    private static List<Integer> numbers(String list) {
-        List<Integer> out = new ArrayList<>();
-        for (String n : list.split(",")) {
-            out.add(Integer.parseInt(n.trim()));
-        }
-        return out;
     }
 
     /**

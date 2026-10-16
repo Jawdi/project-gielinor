@@ -74,6 +74,22 @@ final class ModelExporter {
         return loader.load(id, archive.decompress(store.getStorage().loadArchive(archive)));
     }
 
+    /** Every identity kit a player can choose when designing their character, lowest id first. */
+    List<KitDefinition> selectableKits() throws IOException {
+        Index configs = store.getIndex(IndexType.CONFIGS);
+        Archive kits = configs.getArchive(ConfigType.IDENTKIT.getId());
+        ArchiveFiles files = kits.getFiles(store.getStorage().loadArchive(kits));
+        List<KitDefinition> out = new ArrayList<>();
+        for (var file : files.getFiles()) {
+            KitDefinition kit = new KitLoader().load(file.getFileId(), file.getContents());
+            if (!kit.nonSelectable && kit.models != null && kit.models.length > 0) {
+                out.add(kit);
+            }
+        }
+        out.sort(java.util.Comparator.comparingInt(KitDefinition::getId));
+        return out;
+    }
+
     /** The models an identity kit (a body part of the player's look) is made of. */
     int[] kitModels(int kit) throws IOException {
         Index configs = store.getIndex(IndexType.CONFIGS);
@@ -146,6 +162,7 @@ final class ModelExporter {
             int rgb = texture >= 0 ? textures.getAverageTextureRGB(texture) : JagexColor.HSLtoRGB(model.faceColors[i], BRIGHTNESS);
             mesh.faces.add(new int[]{model.faceIndices1[i], model.faceIndices2[i], model.faceIndices3[i]});
             mesh.colours.add(rgb);
+            mesh.sourceColours.add(model.faceColors[i] & 0xffff);
         }
         return mesh;
     }

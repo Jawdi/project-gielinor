@@ -70,9 +70,12 @@ The builder reads the cache with RuneLite's open-source cache library.
 - Clothing and armour: every wearable is Zomboid clothing. Armour protects
   against bites and scratches by its defence bonuses (a rune platebody about
   57 out of 100). Helmets hide hair as they do in the game.
-- Your character: new characters are Gielinor folk, their body in six parts
-  (head, torso, arms, hands, legs, feet) that clothing replaces as the game's
-  equipment does: a platebody hides the torso and arms.
+- Your character: character creation is the game's character designer. Pick
+  body type A or B, a style for each body part (hair, jaw, torso, arms, hands,
+  legs, feet) and the hair, clothing, shoe and skin colours from the game's
+  palettes. Name, voice, profession and traits stay Zomboid's. Clothing
+  replaces body parts as the game's equipment does: a platebody hides the
+  torso and arms.
 - Zombies: every zombie is one of the game's zombie looks, or now and then
   one of its human-shaped monsters (goblins, skeletons, guards, barbarians,
   pirates, knights, ghouls and more).

@@ -21,6 +21,12 @@ final class Mesh {
     /** RGB a face. */
     final List<Integer> colours = new ArrayList<>();
     /**
+     * Each face's colour as the game stores it (packed hue, saturation and
+     * lightness) before any recolouring: how the player's chosen colours
+     * find the faces they colour. Empty for meshes not read from the game.
+     */
+    final List<Integer> sourceColours = new ArrayList<>();
+    /**
      * The game's animation group of each vertex (-1 for none): the game
      * moves a group's vertices together, so a group is one part of a body,
      * such as an upper arm or a shin. Empty for meshes not read from the game.

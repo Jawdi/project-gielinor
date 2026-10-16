@@ -132,36 +132,76 @@ final class ItemModels {
 
     /** How tall the body made of these identity kits stands, in game units. */
     double kitCrown(java.util.List<Integer> kits) throws IOException {
-        double crown = 0;
-        for (double[] v : merged(kitModels(kits), null, null, null).vertices) {
-            crown = Math.max(crown, -v[1]);
-        }
-        return crown;
-    }
-
-    /**
-     * Writes one part of the player's body (its head, say, or legs), made of
-     * identity kits, as a piece hiding the parts of Zomboid's body in
-     * `masks`. `crown` is the whole body's height, so its parts all scale
-     * alike. Returns false if it has nothing to show.
-     */
-    boolean exportKitPart(String name, java.util.List<Integer> kits, double crown, java.util.List<Integer> masks, Path media) throws IOException {
-        Mesh mesh = merged(kitModels(kits), null, null, null);
-        if (mesh.faces.isEmpty()) {
-            return false;
-        }
-        writeClothing(name, mesh, fitted(mesh, crown, false, true), masks, masks.contains(0) ? NO_HAIR_OR_BEARD : null, media);
-        return true;
-    }
-
-    private int[] kitModels(java.util.List<Integer> kits) throws IOException {
         java.util.List<Integer> models = new java.util.ArrayList<>();
         for (int kit : kits) {
             for (int m : exporter.kitModels(kit)) {
                 models.add(m);
             }
         }
-        return models.stream().mapToInt(Integer::intValue).toArray();
+        double crown = 0;
+        for (double[] v : merged(models.stream().mapToInt(Integer::intValue).toArray(), null, null, null).vertices) {
+            crown = Math.max(crown, -v[1]);
+        }
+        return crown;
+    }
+
+    /** The body parts a player can choose from (see {@link ModelExporter#selectableKits}). */
+    java.util.List<net.runelite.cache.definitions.KitDefinition> selectableKits() throws IOException {
+        return exporter.selectableKits();
+    }
+
+    /** The colour the game models skin in on every body part; the player's skin colour takes its place. */
+    static final int SKIN_SOURCE = 4550;
+
+    /**
+     * The pieces a body part is split into, so the player's colours can be
+     * laid on it: its own colours, its skin, and the faces the player's
+     * chosen colour (hair, clothing or shoes) takes the place of. The last
+     * two are white and take their colour from a tint.
+     */
+    enum Piece {
+        FIXED(""), SKIN("Skin"), COLOUR("Colour");
+
+        final String suffix;
+
+        Piece(String suffix) {
+            this.suffix = suffix;
+        }
+    }
+
+    /**
+     * Writes one of the game's body parts (an identity kit: a hairstyle, a
+     * torso, a pair of legs) as up to three pieces named `name` plus each
+     * {@link Piece}'s suffix, hiding the parts of Zomboid's body in `masks`.
+     * Faces modelled in `colourSource` (packed HSL; -1 for none) go in the
+     * colour piece, skin in the skin piece. `crown` is the whole body's
+     * height, so a body's parts all scale alike. Returns the pieces written.
+     */
+    java.util.Set<Piece> exportKit(String name, int kit, int colourSource, double crown, java.util.List<Integer> masks, Path media) throws IOException {
+        Mesh mesh = merged(exporter.kitModels(kit), null, null, null);
+        java.util.Set<Piece> written = java.util.EnumSet.noneOf(Piece.class);
+        if (mesh.faces.isEmpty()) {
+            return written;
+        }
+        Bound[] bounds = fitted(mesh, crown, false, true);
+        String hat = masks.contains(0) ? NO_HAIR_OR_BEARD : null;
+        for (Piece piece : Piece.values()) {
+            Mesh part = new Mesh();
+            part.vertices.addAll(mesh.vertices);
+            for (int f = 0; f < mesh.faces.size(); f++) {
+                int source = mesh.sourceColours.get(f);
+                Piece of = source == SKIN_SOURCE ? Piece.SKIN : source == colourSource ? Piece.COLOUR : Piece.FIXED;
+                if (of == piece) {
+                    part.faces.add(mesh.faces.get(f));
+                    part.colours.add(piece == Piece.FIXED ? mesh.colours.get(f) : 0xFFFFFF);
+                }
+            }
+            if (!part.faces.isEmpty()) {
+                writeClothing(name + piece.suffix, part, bounds, masks, hat, piece != Piece.FIXED, media);
+                written.add(piece);
+            }
+        }
+        return written;
     }
 
     /** Models merged into one mesh in game units, recoloured by an item or a creature's definition. */
@@ -184,6 +224,7 @@ final class ItemModels {
                 mesh.faces.add(new int[]{f[0] + base, f[1] + base, f[2] + base});
             }
             mesh.colours.addAll(part.colours);
+            mesh.sourceColours.addAll(part.sourceColours);
             mesh.groups.addAll(part.groups);
         }
         return mesh;
@@ -279,6 +320,11 @@ final class ItemModels {
      * definition. `hatCategory` (or null) says whether it hides hair or beard.
      */
     private void writeClothing(String name, Mesh mesh, Bound[] bounds, java.util.List<Integer> masks, String hatCategory, Path media) throws IOException {
+        writeClothing(name, mesh, bounds, masks, hatCategory, false, media);
+    }
+
+    /** The same; a `tintable` piece takes its colour from the tint the mod gives it. */
+    private void writeClothing(String name, Mesh mesh, Bound[] bounds, java.util.List<Integer> masks, String hatCategory, boolean tintable, Path media) throws IOException {
         Palette palette = new Palette();
         mesh.colours.forEach(palette::add);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
@@ -300,7 +346,7 @@ final class ItemModels {
         xml.append("\t<m_FemaleModel>skinned\\clothes\\gielinor\\").append(name).append("</m_FemaleModel>\r\n");
         xml.append("\t<m_AltMaleModel></m_AltMaleModel>\r\n\t<m_AltFemaleModel></m_AltFemaleModel>\r\n");
         xml.append("\t<m_Static>false</m_Static>\r\n\t<m_AllowRandomHue>false</m_AllowRandomHue>\r\n");
-        xml.append("\t<m_AllowRandomTint>false</m_AllowRandomTint>\r\n\t<m_AttachBone></m_AttachBone>\r\n");
+        xml.append("\t<m_AllowRandomTint>").append(tintable).append("</m_AllowRandomTint>\r\n\t<m_AttachBone></m_AttachBone>\r\n");
         // Zomboid cuts clothing worn under other clothing with mask images
         // laid out like its own body texture; a palette texture isn't, so
         // the cuts would fall in random places. "none" leaves it whole, as

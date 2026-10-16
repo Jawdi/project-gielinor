@@ -127,12 +127,46 @@ final class HumanFit {
             // Weighted by where it was, before the hands move to the grip.
             Bound shared = weightsFromBody(p, bone, armsAllowed);
             if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
-                p = toGrip(p, bone);
+                p = toGrip(filledOut(p, bone), bone);
             }
             out[i] = new Bound(p, shared.bones(), shared.weights());
             mesh.vertices.set(i, p);
         }
         return out;
+    }
+
+    /**
+     * How much fuller (in metres, all round) the game's lower arms are made,
+     * easing in from the elbow to the wrist and hand. Its arms taper from an
+     * upper arm thicker than Zomboid's to a wrist half as thick (2.6 by 2.4 cm
+     * for body type A, 1.7 by 1.2 for B, against Zomboid's 4.1), which reads
+     * as a stick in Zomboid's lighting and poses. This brings body type A's
+     * wrist to about Zomboid's.
+     */
+    private static final double LOWER_ARM_FILL = 0.008;
+
+    /**
+     * A forearm or hand vertex moved out from the line down the forearm by
+     * {@link #LOWER_ARM_FILL}, none at the elbow and all of it from the wrist
+     * on. Every piece over the lower arm (the body, a top's bare skin, a
+     * sleeve, a glove) is moved alike, so they still meet.
+     */
+    private double[] filledOut(double[] p, String bone) {
+        String side = bone.contains("_L_") ? "L" : "R";
+        double[] elbow = skeleton.bind("Bip01_" + side + "_Forearm");
+        double[] forearm = ModelExporter.sub(skeleton.bind("Bip01_" + side + "_Hand"), elbow);
+        double length = Math.sqrt(ModelExporter.dot(forearm, forearm));
+        double[] along = ModelExporter.scale(forearm, 1 / length);
+        double reach = ModelExporter.dot(ModelExporter.sub(p, elbow), along);
+        double[] onLine = ModelExporter.add(elbow, ModelExporter.scale(along, reach));
+        double[] out = ModelExporter.sub(p, onLine);
+        double distance = Math.sqrt(ModelExporter.dot(out, out));
+        if (distance < 1e-6) {
+            return p;
+        }
+        double t = Math.max(0, Math.min(1, reach / length));
+        double fill = LOWER_ARM_FILL * t * t * (3 - 2 * t);
+        return ModelExporter.add(onLine, ModelExporter.scale(out, (distance + fill) / distance));
     }
 
     /**
@@ -182,56 +216,71 @@ final class HumanFit {
         return ModelExporter.add(p, ModelExporter.scale(shift, share));
     }
 
+    /** Copies of Zomboid's skin weights, one for each part of the body, made when first wanted. */
+    private final Map<BodyPart, SkinTransfer> skins = new java.util.EnumMap<>(BodyPart.class);
+
     /**
-     * How Zomboid's body moves the point of it out from `p` (see
-     * {@link Skeleton#spotOutFrom}), as a vertex at `p` is to move: the
-     * weights of that point's triangle's corners, mixed
-     * by where on the triangle it lies. That's how Zomboid's own clothes are
-     * weighted (the body's weights carried over), so the shoulders go with
-     * the clavicles as the arms reach, the wrist mostly with the forearm, and
-     * the game's separate limb blocks meet alike at every joint. The fingers
-     * count as the hand, which the game's fists are, whole; without
-     * `armsAllowed` the arms (and clavicles) count for nothing. Anything the
-     * body gives none of goes with `bone`.
+     * The weights for a vertex at `p` whose animation group goes with
+     * `bone`: Zomboid's own, from the nearest point on that part of its body
+     * (see {@link BodyPart}), as Zomboid's clothes are weighted. So the
+     * shoulders go with the clavicles as the arms reach, the wrist mostly with
+     * the forearm, and the game's separate limb blocks meet alike at every
+     * joint. The fingers count as the hand, which the game's fists are,
+     * whole; without `armsAllowed` the arms and clavicles count for nothing.
+     * The dress bones count for nothing either: they move the panel of skin
+     * Zomboid's body keeps between its legs for skirts (see {@link #asSkirt}),
+     * and would pull legs and trousers in towards it.
      */
     private Bound weightsFromBody(double[] p, String bone, boolean armsAllowed) {
-        Skeleton.Spot spot = skeleton.spotOutFrom(p);
-        int[] nearest = spot.face();
-        double[] at = spot.weights();
-        Map<String, Double> sum = new HashMap<>();
-        for (int k = 0; k < 3; k++) {
-            for (Map.Entry<String, Double> e : skeleton.bodyWeights.get(nearest[k]).entrySet()) {
-                String b = e.getKey();
-                if (b.contains("Finger")) {
-                    b = b.substring(0, "Bip01_R_".length()) + "Hand";
-                }
-                if (!armsAllowed && (isArm(b) || b.contains("Clavicle"))) {
-                    continue;
-                }
-                sum.merge(b, e.getValue() * at[k], Double::sum);
-            }
-        }
-        List<Map.Entry<String, Double>> kept = new ArrayList<>(sum.entrySet());
-        kept.removeIf(e -> e.getValue() < 0.01);
-        kept.sort((x, y) -> Double.compare(y.getValue(), x.getValue()));
-        if (kept.size() > MAX_INFLUENCES) {
-            kept = kept.subList(0, MAX_INFLUENCES);
-        }
-        double total = kept.stream().mapToDouble(Map.Entry::getValue).sum();
-        if (total <= 0) {
-            return new Bound(p, new String[]{bone}, new double[]{1});
-        }
-        String[] bones = new String[kept.size()];
-        double[] weights = new double[kept.size()];
-        for (int i = 0; i < kept.size(); i++) {
-            bones[i] = kept.get(i).getKey();
-            weights[i] = kept.get(i).getValue() / total;
-        }
-        return new Bound(p, bones, weights);
+        BodyPart part = BodyPart.of(bone);
+        return weights(p, bone, skins.computeIfAbsent(part, k -> new SkinTransfer(skeleton, k::skins)).bind(p), armsAllowed, false);
     }
 
-    /** The most bones a vertex goes with, as Zomboid's own meshes have it. */
-    private static final int MAX_INFLUENCES = 4;
+    /** Copied weights for a vertex at `p` (going with `bone`), the fingers as the hand, arms and dress bones kept as asked. */
+    private static Bound weights(double[] p, String bone, Bound copied, boolean armsAllowed, boolean dress) {
+        Map<String, Double> weights = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < copied.bones().length; i++) {
+            String b = copied.bones()[i];
+            if (b.contains("Finger")) {
+                b = b.substring(0, "Bip01_R_".length()) + "Hand";
+            }
+            if (!armsAllowed && (isArm(b) || b.contains("Clavicle")) || !dress && b.contains("Dress")) {
+                continue;
+            }
+            weights.merge(b, copied.weights()[i], Double::sum);
+        }
+        if (weights.isEmpty()) {
+            return new Bound(p, new String[]{bone}, new double[]{1});
+        }
+        return SkinTransfer.strongest(p, weights);
+    }
+
+    /** Copies of Zomboid's skin weights for skirts, one for each part of the body, made when first wanted. */
+    private final Map<BodyPart, SkinTransfer> skirtSkins = new java.util.EnumMap<>(BodyPart.class);
+
+    /**
+     * A skirt's weights, from `bounds` as fitted: Zomboid's long and knee
+     * skirts are the panel of skin its body keeps between the legs (shown
+     * when one's worn), moved by the dress bones so it swings as one sheet
+     * rather than parting with the legs. So a skirt's legs and hips take
+     * their weights from that panel as well as the legs, whichever they lie
+     * nearest: the middle of the skirt goes with the dress bones, its sides
+     * with the legs.
+     */
+    Bound[] asSkirt(Bound[] bounds) {
+        Bound[] out = new Bound[bounds.length];
+        for (int i = 0; i < bounds.length; i++) {
+            BodyPart part = BodyPart.of(bounds[i].bone());
+            if (part != BodyPart.LEFT_LEG && part != BodyPart.RIGHT_LEG && part != BodyPart.TORSO) {
+                out[i] = bounds[i];
+                continue;
+            }
+            double[] p = bounds[i].position();
+            Bound copied = skirtSkins.computeIfAbsent(part, k -> new SkinTransfer(skeleton, b -> k.skins(b) || b.contains("Dress"))).bind(p);
+            out[i] = weights(p, bounds[i].bone(), copied, false, true);
+        }
+        return out;
+    }
 
     /**
      * Which way the model's arm on one side points from the shoulder: at its

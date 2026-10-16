@@ -285,6 +285,112 @@ final class Mesh {
     }
 
     /** Reverses every face's winding, which turns its normal round. */
+    /**
+     * Winds each separate piece of the mesh (a hand, an arm, a torso) with
+     * its normals out if `outward`, else in, as Zomboid's are. A closed piece
+     * goes by its volume, which is positive one way round and negative the
+     * other wherever it's measured from: a vote of faces about the middle of
+     * the whole mesh can't tell for small pieces far from it (a pair of hands
+     * either side of the body), and wound wrong they show their insides. A
+     * piece that's open (a shoe, a cape) goes by a vote.
+     */
+    void orientPieces(boolean outward) {
+        double[] middle = ModelExporter.centroid(vertices);
+        for (List<Integer> piece : pieces()) {
+            double[] c = new double[3];
+            for (int f : piece) {
+                for (int v : faces.get(f)) {
+                    for (int k = 0; k < 3; k++) {
+                        c[k] += vertices.get(v)[k] / (3.0 * piece.size());
+                    }
+                }
+            }
+            double volume = volume(piece, c);
+            double shifted = volume(piece, ModelExporter.add(c, new double[]{0.1, 0.1, 0.1}));
+            boolean closed = Math.abs(volume) > 1e-9 && Math.abs(volume - shifted) < 0.05 * Math.abs(volume);
+            double out;
+            if (closed) {
+                out = volume;
+            } else {
+                // Open: a vote of its faces, about its own middle if that's
+                // clear (a shoe, open at the ankle), else about the whole
+                // mesh's (a cape, a sheet with no inside of its own).
+                double own = 0;
+                double whole = 0;
+                for (int f : piece) {
+                    double[] mid = new double[3];
+                    for (int v : faces.get(f)) {
+                        for (int k = 0; k < 3; k++) {
+                            mid[k] += vertices.get(v)[k] / 3;
+                        }
+                    }
+                    own += Math.signum(ModelExporter.dot(normal(f), ModelExporter.sub(mid, c)));
+                    whole += Math.signum(ModelExporter.dot(normal(f), ModelExporter.sub(mid, middle)));
+                }
+                out = Math.abs(own) >= 0.5 * piece.size() ? own : whole;
+            }
+            if (out != 0 && out > 0 != outward) {
+                for (int f : piece) {
+                    int[] face = faces.get(f);
+                    int t = face[1];
+                    face[1] = face[2];
+                    face[2] = t;
+                }
+            }
+        }
+    }
+
+    /** The faces in each separate piece: faces sharing a corner (or a corner's place) are in one piece. */
+    private List<List<Integer>> pieces() {
+        int[] parent = new int[vertices.size()];
+        for (int i = 0; i < parent.length; i++) {
+            parent[i] = i;
+        }
+        java.util.Map<String, Integer> places = new java.util.HashMap<>();
+        for (int i = 0; i < vertices.size(); i++) {
+            double[] v = vertices.get(i);
+            String place = Math.round(v[0] * 1e4) + "," + Math.round(v[1] * 1e4) + "," + Math.round(v[2] * 1e4);
+            Integer first = places.putIfAbsent(place, i);
+            if (first != null) {
+                join(parent, i, first);
+            }
+        }
+        for (int[] f : faces) {
+            join(parent, f[0], f[1]);
+            join(parent, f[1], f[2]);
+        }
+        java.util.Map<Integer, List<Integer>> byRoot = new java.util.LinkedHashMap<>();
+        for (int f = 0; f < faces.size(); f++) {
+            byRoot.computeIfAbsent(root(parent, faces.get(f)[0]), k -> new ArrayList<>()).add(f);
+        }
+        return new ArrayList<>(byRoot.values());
+    }
+
+    private static int root(int[] parent, int i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    }
+
+    private static void join(int[] parent, int a, int b) {
+        parent[root(parent, a)] = root(parent, b);
+    }
+
+    /** A piece's volume measured from `from`, signed by which way its faces' normals point. */
+    private double volume(List<Integer> piece, double[] from) {
+        double volume = 0;
+        for (int f : piece) {
+            int[] face = faces.get(f);
+            double[] a = ModelExporter.sub(vertices.get(face[0]), from);
+            double[] b = ModelExporter.sub(vertices.get(face[1]), from);
+            double[] c = ModelExporter.sub(vertices.get(face[2]), from);
+            volume += ModelExporter.dot(a, ModelExporter.cross(b, c)) / 6;
+        }
+        return volume;
+    }
+
     void flipWinding() {
         for (int[] f : faces) {
             int t = f[1];

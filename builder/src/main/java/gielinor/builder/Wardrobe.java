@@ -115,7 +115,6 @@ final class Wardrobe {
 
     /** How far clothes sit out from the body, and the body in from Zomboid's skeleton line, in metres. */
     private static final double CLOTHES_OUT = 0.004;
-    private static final double BODY_IN = -0.008;
 
     private static final String MODULE = Main.MODULE;
 
@@ -196,7 +195,7 @@ final class Wardrobe {
                 boolean cutBriefs = legsRegion;
                 double[] cuts = cutBriefs ? new double[]{UNDERWEAR_FROM, UNDERWEAR_TO} : new double[0];
                 models.fitting(type, legsRegion || region.name().equals("feet"));
-                if (models.exportWardrobe(name, region.kits()[type], region.pieces()[type], crown, BODY_IN, skin, SKIN.offered,
+                if (models.exportWardrobe(name, region.kits()[type], region.pieces()[type], crown, 0, skin, SKIN.offered,
                         (source, rgb, height, across) -> {
                             if (cutBriefs && height >= UNDERWEAR_FROM && height < UNDERWEAR_TO && across < UNDERWEAR_ACROSS) {
                                 return underwear;
@@ -333,6 +332,7 @@ final class Wardrobe {
         // and its second shade (the first again where there's none).
         lua.append("    bare = {\n").append(bare).append("    },\n");
         lua.append("    skins = ").append(SKIN.offered).append(",\n");
+        lua.append("    masks = {\n").append(masks(zomboid.resolve("media"), media)).append("    },\n");
         lua.append("    colours = {\n");
         for (BodyColour colour : COLOURS) {
             lua.append("        ").append(colour.name()).append(" = {\n");
@@ -388,7 +388,7 @@ final class Wardrobe {
                 shape.see(height, across);
             }
             return clothing(source, rgb, colour);
-        }, choices, skin, SKIN.offered, media);
+        }, choices, skin, SKIN.offered, () -> shape != null && shape.skirt(), media);
         if (written && models.wroteSkin(skinName, media)) {
             script.append(item(skinName, "Gielinor body", null));
             bare.append("        [\"").append(MODULE).append('.').append(name).append("\"] = \"")
@@ -414,6 +414,11 @@ final class Wardrobe {
             }
         }
 
+        /** Whether it's a skirt: its legs joined below the knee. */
+        boolean skirt() {
+            return joined;
+        }
+
         String name() {
             if (joined) {
                 return lowest < 0.15 ? "Long skirt" : "Skirt";
@@ -433,6 +438,55 @@ final class Wardrobe {
     /** A hair face's shade, or -1 for anything else. */
     private static int hairShade(int source) {
         return source == HAIR.source ? SharedPalette.shade(0) : source == HAIR.secondSource ? SharedPalette.shade(1) : -1;
+    }
+
+    /**
+     * The body regions each clothing item (by name) hides, from the parts of
+     * Zomboid's body it masks, Zomboid's and the content pack's alike: so a
+     * Gielinor body hides under a jacket, a platebody or boots as Zomboid's
+     * does. A region goes only if all of it is masked (both arms, say).
+     */
+    private static String masks(Path zomboidMedia, Path media) throws IOException {
+        // Zomboid's mask parts: 1 torso, 3 and 5 the arms, 4 and 6 the hands,
+        // 7 and 9 the legs, 8 and 10 the feet, 12 and 13 chest and waist.
+        int[][] parts = {{1}, {3, 5}, {4, 6}, {7, 9}, {8, 10}, {12, 13}};
+        String[] regions = {"torso", "arms", "hands", "legs", "feet", "torso"};
+        java.util.Map<String, java.util.Set<String>> hidden = new java.util.TreeMap<>();
+        java.util.regex.Pattern mask = java.util.regex.Pattern.compile("<m_Masks>(\\d+)</m_Masks>");
+        for (Path dir : List.of(zomboidMedia.resolve("clothing/clothingItems"), media.resolve("clothing/clothingItems"))) {
+            if (!Files.isDirectory(dir)) {
+                continue;
+            }
+            try (java.util.stream.Stream<Path> files = Files.list(dir)) {
+                for (Path file : (Iterable<Path>) files::iterator) {
+                    String fileName = file.getFileName().toString();
+                    if (!fileName.endsWith(".xml")) {
+                        continue;
+                    }
+                    java.util.Set<Integer> masked = new java.util.HashSet<>();
+                    java.util.regex.Matcher m = mask.matcher(Files.readString(file, StandardCharsets.UTF_8));
+                    while (m.find()) {
+                        masked.add(Integer.parseInt(m.group(1)));
+                    }
+                    for (int i = 0; i < parts.length; i++) {
+                        boolean all = true;
+                        for (int part : parts[i]) {
+                            all &= masked.contains(part);
+                        }
+                        if (all) {
+                            hidden.computeIfAbsent(fileName.substring(0, fileName.length() - 4), k -> new java.util.TreeSet<>()).add(regions[i]);
+                        }
+                    }
+                }
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        hidden.forEach((name, set) -> {
+            out.append("        [\"").append(name.replace("\\", "\\\\").replace("\"", "\\\"")).append("\"] = {");
+            set.forEach(r -> out.append('"').append(r).append("\", "));
+            out.append("},\n");
+        });
+        return out.toString();
     }
 
     /** A clothing face: the chosen colour's shades, and the kit's own colours. */

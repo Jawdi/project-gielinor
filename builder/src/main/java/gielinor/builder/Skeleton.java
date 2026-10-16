@@ -191,12 +191,15 @@ final class Skeleton {
     record Spot(int[] face, double[] weights) {
     }
 
-    /** The point on the body nearest `p`. */
-    Spot nearestSpot(double[] p) {
-        int[] nearest = bodyFaces.get(0);
+    /** The point nearest `p` on the skin of a part of the body. */
+    Spot nearestSpot(double[] p, BodyPart part) {
+        int[] nearest = null;
         double[] at = {1, 0, 0};
         double best = Double.MAX_VALUE;
         for (int[] f : bodyFaces) {
+            if (!part.skins(mainBone(f))) {
+                continue;
+            }
             double[] w = closestWeights(p, f);
             double[] d = ModelExporter.sub(p, bodyPoint(f, w));
             double distance = ModelExporter.dot(d, d);
@@ -210,50 +213,47 @@ final class Skeleton {
     }
 
     /**
-     * The point on the body straight out through `p` from the bone it lies
-     * along (or the nearest, if there's none out that way). The game's limbs
-     * lie inside Zomboid's; nearest to a point inside an arm may be the
-     * torso, or the arm's far side, where out from the bone it's always the
-     * arm, as far round it as the point is round its own.
+     * The point on a part's skin straight out through `p` from the line down
+     * the part's middle (or the nearest, if there's none out that way). The
+     * game's limbs lie inside Zomboid's; nearest a point inside an arm may be
+     * the arm's far side, where straight out it's always the near side, as
+     * far round as the point is round its own.
      */
-    Spot spotOutFrom(double[] p) {
-        double[] axis = nearestOnBones(p);
-        double[] out = axis == null ? null : ModelExporter.sub(p, axis);
-        if (out == null || ModelExporter.dot(out, out) < 1e-8) {
-            return nearestSpot(p);
+    Spot spotOutFrom(double[] p, BodyPart part) {
+        double[] axis = nearestOnAxis(p, part);
+        double[] out = ModelExporter.sub(p, axis);
+        if (ModelExporter.dot(out, out) < 1e-8) {
+            return nearestSpot(p, part);
         }
         double best = Double.MAX_VALUE;
         Spot spot = null;
         for (int[] f : bodyFaces) {
+            if (!part.skins(mainBone(f))) {
+                continue;
+            }
             double[] hit = rayHit(axis, out, f);
             if (hit != null && hit[3] < best) {
                 best = hit[3];
                 spot = new Spot(f, new double[]{hit[0], hit[1], hit[2]});
             }
         }
-        return spot != null ? spot : nearestSpot(p);
+        return spot != null ? spot : nearestSpot(p, part);
     }
 
-    /** The bones moving the body that have a parent to run from, found when first wanted. */
-    private List<String> movingBones;
-
-    /** The point nearest `p` on the bones moving the body, each a line from its parent's joint to its own. */
-    private double[] nearestOnBones(double[] p) {
-        if (movingBones == null) {
-            movingBones = new ArrayList<>();
-            for (Map<String, Double> weights : bodyWeights) {
-                for (String bone : weights.keySet()) {
-                    if (!movingBones.contains(bone) && bindPositions.containsKey(parents.get(bone))) {
-                        movingBones.add(bone);
-                    }
-                }
+    /** The point nearest `p` on the line down a part's middle, joint to joint. */
+    private double[] nearestOnAxis(double[] p, BodyPart part) {
+        // Joints the body's skin doesn't hang from (the toes) have no place.
+        List<double[]> joints = new ArrayList<>();
+        for (String joint : part.axis()) {
+            if (bindPositions.containsKey(joint)) {
+                joints.add(bindPositions.get(joint));
             }
         }
         double best = Double.MAX_VALUE;
-        double[] out = null;
-        for (String bone : movingBones) {
-            double[] a = bindPositions.get(parents.get(bone));
-            double[] b = bindPositions.get(bone);
+        double[] out = joints.get(0);
+        for (int i = 0; i + 1 < joints.size(); i++) {
+            double[] a = joints.get(i);
+            double[] b = joints.get(i + 1);
             double[] ab = ModelExporter.sub(b, a);
             double len = ModelExporter.dot(ab, ab);
             double t = len == 0 ? 0 : Math.max(0, Math.min(1, ModelExporter.dot(ModelExporter.sub(p, a), ab) / len));

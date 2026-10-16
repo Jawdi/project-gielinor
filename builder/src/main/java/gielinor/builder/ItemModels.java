@@ -117,9 +117,7 @@ final class ItemModels {
         for (int i = 0; i < bounds.length; i++) {
             mesh.vertices.set(i, bounds[i].position());
         }
-        if (mesh.outwardVote() >= 0 != outward) {
-            mesh.flipWinding();
-        }
+        mesh.orientPieces(outward);
         Palette palette = new Palette();
         mesh.colours.forEach(palette::add);
         Path meshDir = media.resolve("models_X/Skinned/Gielinor");
@@ -227,7 +225,7 @@ final class ItemModels {
             return false;
         }
         String[] parts = bodyParts(part, bounds);
-        pushAlongSurface(part, push, bounds, true);
+        pushAlongSurface(part, push);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Files.createDirectories(meshDir);
         part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png",
@@ -258,7 +256,7 @@ final class ItemModels {
      * which shows through tears. Returns whether the garment has any cloth.
      */
     boolean exportGarment(String name, String skinName, int[] kits, double crown, double push, FaceColour colour,
-            int[][] choices, SharedPalette skin, int skinChoices, Path media) throws IOException {
+            int[][] choices, SharedPalette skin, int skinChoices, java.util.function.BooleanSupplier skirt, Path media) throws IOException {
         java.util.List<Integer> models = new java.util.ArrayList<>();
         for (int kit : kits) {
             for (int m : exporter.kitModels(kit)) {
@@ -293,13 +291,16 @@ final class ItemModels {
         if (cloth.faces.isEmpty()) {
             return false;
         }
+        // How it moves: a skirt (known now its faces are seen) as Zomboid's
+        // skirts do; its place on the body's texture still by its legs.
+        Bound[] moves = skirt.getAsBoolean() ? fit.asSkirt(bounds) : bounds;
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Path textureDir = media.resolve("textures/Clothes/Gielinor/Garments");
         Files.createDirectories(meshDir);
         Files.createDirectories(textureDir);
-        GarmentLayout layout = new GarmentLayout(skeleton, cloth);
-        pushAlongSurface(cloth, push, bounds, false);
-        cloth.writeSkinnedX(meshDir.resolve(name + ".X"), name, "x.png", layout::uv, skeleton, bounds);
+        GarmentLayout layout = new GarmentLayout(skeleton, cloth, bounds);
+        pushAlongSurface(cloth, push);
+        cloth.writeSkinnedX(meshDir.resolve(name + ".X"), name, "x.png", layout::uv, skeleton, moves);
         java.util.List<String> textures = new java.util.ArrayList<>();
         for (int i = 0; i < choices.length; i++) {
             int[] shades = choices[i];
@@ -322,8 +323,7 @@ final class ItemModels {
             lining.faces.add(cloth.faces.get(f));
             lining.colours.add(SharedPalette.shade(0));
         }
-        pushAlongSurface(lining, -push - LINING_IN, bounds, false);
-        pushAlongSurface(bare, push, bounds, false);
+        pushAlongSurface(lining, -push - LINING_IN);
         int offset = bare.vertices.size();
         bare.vertices.addAll(lining.vertices);
         for (int f = 0; f < lining.faces.size(); f++) {
@@ -334,10 +334,13 @@ final class ItemModels {
         Bound[] bareBounds = new Bound[bounds.length * 2];
         System.arraycopy(bounds, 0, bareBounds, 0, bounds.length);
         System.arraycopy(bounds, 0, bareBounds, bounds.length, bounds.length);
+        Bound[] bareMoves = new Bound[moves.length * 2];
+        System.arraycopy(moves, 0, bareMoves, 0, moves.length);
+        System.arraycopy(moves, 0, bareMoves, moves.length, moves.length);
         {
             String[] parts = bodyParts(bare, bareBounds);
             bare.writeSkinnedX(meshDir.resolve(skinName + ".X"), skinName, skin.name() + "_0.png",
-                (face, corner) -> skin.uv(parts[face], bare.colours.get(face), face, corner), skeleton, bareBounds);
+                (face, corner) -> skin.uv(parts[face], bare.colours.get(face), face, corner), skeleton, bareMoves);
             java.util.List<String> skinTextures = new java.util.ArrayList<>();
             for (int i = 0; i < skinChoices; i++) {
                 skinTextures.add(skin.name() + "_" + i);
@@ -458,38 +461,8 @@ final class ItemModels {
         return out;
     }
 
-    /**
-     * The way along a limb bone, from its joint towards its child's, or null
-     * for the body, head and feet.
-     */
-    private double[] limbAxis(String bone) {
-        String side = bone.contains("_L_") ? "_L_" : bone.contains("_R_") ? "_R_" : null;
-        if (side == null) {
-            return null;
-        }
-        String[] from = bone.endsWith("UpperArm") ? new String[]{"UpperArm", "Forearm"}
-            : bone.endsWith("Forearm") || bone.endsWith("Hand") ? new String[]{"Forearm", "Hand"}
-            : bone.endsWith("Thigh") ? new String[]{"Thigh", "Calf"}
-            : bone.endsWith("Calf") ? new String[]{"Calf", "Foot"}
-            : null;
-        if (from == null) {
-            return null;
-        }
-        double[] axis = ModelExporter.sub(skeleton.bind("Bip01" + side + from[1]), skeleton.bind("Bip01" + side + from[0]));
-        double length = Math.sqrt(ModelExporter.dot(axis, axis));
-        return ModelExporter.scale(axis, 1 / length);
-    }
-
-    /**
-     * Moves each vertex `distance` along its faces' average outward normal,
-     * or with `acrossLimbs` a limb's vertex across its limb only (`bounds`
-     * gives each vertex's bones). That's for the body, shrunk inside the
-     * clothes: the game's limbs are blocks meeting end to end at the joints,
-     * which shrunk along the limb too would part there. Clothes and the skin
-     * under them keep their whole push, so they stay apart at the ends of
-     * the limbs (a shoulder) as well.
-     */
-    private void pushAlongSurface(Mesh mesh, double distance, Bound[] bounds, boolean acrossLimbs) {
+    /** Moves each vertex `distance` along its faces' average outward normal. */
+    private void pushAlongSurface(Mesh mesh, double distance) {
         if (distance == 0) {
             return;
         }
@@ -507,10 +480,6 @@ final class ItemModels {
         }
         for (int v = 0; v < mesh.vertices.size(); v++) {
             double[] n = sums[v];
-            double[] axis = acrossLimbs ? limbAxis(bounds[v].bones()[0]) : null;
-            if (axis != null) {
-                n = ModelExporter.sub(n, ModelExporter.scale(axis, ModelExporter.dot(n, axis)));
-            }
             double len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
             if (len == 0) {
                 continue;
@@ -561,12 +530,10 @@ final class ItemModels {
         this.legsOnly = legsOnly;
     }
 
-    /** Puts a model on Zomboid's skeleton (see {@link HumanFit#fit}), winds its faces Zomboid's way, and returns how each vertex is bound. */
+    /** Puts a model on Zomboid's skeleton (see {@link HumanFit#fit}), winds each piece of it Zomboid's way, and returns how each vertex is bound. */
     private Bound[] fitted(Mesh mesh, double crown, boolean findArms, boolean armsAllowed) {
         Bound[] bounds = fit.fit(mesh, crown, findArms, armsAllowed && !legsOnly);
-        if (mesh.outwardVote() >= 0 != outward) {
-            mesh.flipWinding();
-        }
+        mesh.orientPieces(outward);
         return bounds;
     }
 
@@ -782,9 +749,7 @@ final class ItemModels {
             double[] p = mesh.vertices.get(i);
             mesh.vertices.set(i, new double[]{(p[0] - c[0]) * resize[0], (p[1] - floor) * resize[1], (p[2] - c[2]) * resize[2]});
         }
-        if (mesh.outwardVote() >= 0 != outward) {
-            mesh.flipWinding();
-        }
+        mesh.orientPieces(outward);
         write(mesh, name, media);
         return new ZomboidItems.Block("model " + name, files(name), java.util.List.of()).text(4);
     }

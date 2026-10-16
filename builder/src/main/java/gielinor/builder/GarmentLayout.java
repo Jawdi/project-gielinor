@@ -35,7 +35,7 @@ final class GarmentLayout {
     /** Each face's corners' texture coordinates. */
     private final double[][][] uvs;
 
-    GarmentLayout(Skeleton body, Mesh mesh) {
+    GarmentLayout(Skeleton body, Mesh mesh, Bound[] bounds) {
         this.body = body;
         this.mesh = mesh;
         int n = mesh.faces.size();
@@ -43,7 +43,7 @@ final class GarmentLayout {
         for (int[] face : mesh.faces) {
             for (int v : face) {
                 if (vertexUv[v] == null) {
-                    vertexUv[v] = surfaceUv(mesh.vertices.get(v));
+                    vertexUv[v] = surfaceUv(mesh.vertices.get(v), BodyPart.of(bounds[v].bone()));
                 }
             }
         }
@@ -53,7 +53,7 @@ final class GarmentLayout {
             int[] face = mesh.faces.get(f);
             double[][] corners = {vertexUv[face[0]], vertexUv[face[1]], vertexUv[face[2]]};
             if (longestEdge(corners) > SEAM_STRETCH * scale * longestEdge3d(face) + 4.0 / SIZE) {
-                corners = projected(face);
+                corners = projected(face, BodyPart.of(bounds[face[0]].bone()));
             }
             uvs[f] = corners;
         }
@@ -100,41 +100,27 @@ final class GarmentLayout {
     }
 
     /**
-     * The texture coordinates of the point on Zomboid's body straight out
-     * from the bone `p` lies along, through `p` (see
+     * The texture coordinates of the point on `part` of Zomboid's body
+     * straight out from its middle through `p` (see
      * {@link Skeleton#spotOutFrom}). The game's limbs are thinner than
      * Zomboid's, so a garment sits inside Zomboid's body; the nearest point
      * on it would crowd a whole trouser leg onto the side of the body's leg
      * it lies nearest, and blood would fall on it in streaks.
      */
-    private double[] surfaceUv(double[] p) {
-        Skeleton.Spot spot = body.spotOutFrom(p);
+    private double[] surfaceUv(double[] p, BodyPart part) {
+        Skeleton.Spot spot = body.spotOutFrom(p, part);
         return uvAt(spot.face(), spot.weights());
     }
 
-    /** The texture coordinates of the point on Zomboid's body nearest `p`. */
-    private double[] nearestUv(double[] p) {
-        Skeleton.Spot spot = body.nearestSpot(p);
-        return uvAt(spot.face(), spot.weights());
-    }
-
-    /** A face's corners laid onto the body triangle nearest its middle, by their weights in its plane. */
-    private double[][] projected(int[] face) {
+    /** A face's corners laid onto the triangle of `part`'s skin nearest its middle, by their weights in its plane. */
+    private double[][] projected(int[] face, BodyPart part) {
         double[] middle = new double[3];
         for (int v : face) {
             for (int k = 0; k < 3; k++) {
                 middle[k] += mesh.vertices.get(v)[k] / 3;
             }
         }
-        int[] nearest = null;
-        double best = Double.MAX_VALUE;
-        for (int[] f : body.bodyFaces) {
-            double d = distance(middle, body.bodyPoint(f, body.closestWeights(middle, f)));
-            if (d < best) {
-                best = d;
-                nearest = f;
-            }
-        }
+        int[] nearest = body.nearestSpot(middle, part).face();
         double[][] out = new double[3][];
         for (int k = 0; k < 3; k++) {
             out[k] = clamp(uvAt(nearest, body.planeWeights(mesh.vertices.get(face[k]), nearest)));

@@ -101,8 +101,10 @@ function GielinorBody.clothingKind(itemType)
 end
 
 --- Marks in `covered` the body regions a clothing item type covers. A
---- sleeveless top (its sleeves "_0") leaves the arms bare.
-function GielinorBody.cover(covered, itemType)
+--- sleeveless top (its sleeves "_0") leaves the arms bare. Anything else
+--- worn (its item visual given) covers what it masks of Zomboid's body, as it
+--- hides Zomboid's (GielinorKits.masks).
+function GielinorBody.cover(covered, itemType, itemVisual)
     for _, rule in ipairs(COVERED_BY) do
         if itemType and luautils.stringStarts(itemType, rule.prefix) then
             for _, region in ipairs(rule.regions) do
@@ -110,6 +112,13 @@ function GielinorBody.cover(covered, itemType)
                     covered[region] = true
                 end
             end
+        end
+    end
+    local name = itemVisual and itemVisual:getClothingItemName()
+    local masked = name and GielinorKits.masks and GielinorKits.masks[name]
+    if masked then
+        for _, region in ipairs(masked) do
+            covered[region] = true
         end
     end
     return covered
@@ -216,8 +225,8 @@ function GielinorBody.fitClothes(visual, worn)
     local covered = {}
     local bare = {}
     for _, w in ipairs(worn) do
+        GielinorBody.cover(covered, w[1], w[2])
         if GielinorBody.clothingKind(w[1]) then
-            GielinorBody.cover(covered, w[1])
             local piece = GielinorKits.bare[w[1]]
             if piece then
                 bare[piece] = true

@@ -91,7 +91,7 @@ local function makeGielinor(zombie)
     end
     local covered = {}
     for i = 0, itemVisuals:size() - 1 do
-        GielinorBody.cover(covered, itemVisuals:get(i):getItemType())
+        GielinorBody.cover(covered, itemVisuals:get(i):getItemType(), itemVisuals:get(i))
     end
     GielinorBody.layBody(visual, look, covered)
     local worn = {}

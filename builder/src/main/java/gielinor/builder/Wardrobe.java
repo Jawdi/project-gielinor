@@ -76,7 +76,7 @@ final class Wardrobe {
     /** Each body type's default kits, by part (-1: none). */
     private static final int[][] DEFAULT_KITS = {
         {0, 10, 18, 26, 33, 36, 42},
-        {45, -1, 56, 61, 67, 70, 79},
+        {45, 296, 56, 61, 67, 70, 79},
     };
 
     /**

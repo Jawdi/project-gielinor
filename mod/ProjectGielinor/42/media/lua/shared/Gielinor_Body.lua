@@ -15,8 +15,9 @@
 -- A look is what the game's character designer picks:
 -- { type = "A" or "B", kits = { hair, jaw, torso, arms, legs, feet = kit id },
 --   colours = { hair, torso, legs, feet, skin = choice } }
--- A kit left out is none: no jaw is clean shaven, no torso no top, no arms a
--- sleeveless top, no legs no trousers, no feet no shoes.
+-- A clothing kit left out is none: no torso no top, no arms a sleeveless
+-- top, no legs no trousers, no feet no shoes. The hair and jaw are always
+-- there: the jaw is the lower half of the face (a beard is drawn on it).
 -- A body piece's texture choice (counting from 0) is its colour; a clothing
 -- piece's is its colour and skin, colour * GielinorKits.skins + skin.
 
@@ -36,7 +37,7 @@ local COVERED_BY = {
     {prefix = "Gielinor.GielinorShoes_", kind = "feet", regions = {"feet"}},
 }
 -- The parts a look can leave out.
-GielinorBody.OPTIONAL = {jaw = true, torso = true, arms = true, legs = true, feet = true}
+GielinorBody.OPTIONAL = {torso = true, arms = true, legs = true, feet = true}
 
 local PIECE_PREFIX = "Gielinor.Gielinor"
 local BODY_PREFIX = "Gielinor.GielinorBody"
@@ -318,10 +319,8 @@ function GielinorBody.randomLook(female, random)
     local look = GielinorBody.defaultLook(female)
     for _, part in ipairs(GielinorBody.PARTS) do
         local choices = GielinorBody.choices(look.type, part)
-        if #choices > 0 and (part ~= "jaw" or random(3) > 1) then
+        if #choices > 0 then
             look.kits[part] = choices[random(#choices)].kit
-        elseif part == "jaw" then
-            look.kits.jaw = nil
         end
     end
     for key, choices in pairs(GielinorKits.colours) do

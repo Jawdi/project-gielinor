@@ -87,7 +87,7 @@ function GielinorDesigner.refresh(screen)
 end
 
 --- Steps a part to its next or previous style; parts that may be left out
---- (the jaw, and the clothes) step through "none" too, their first option.
+--- (the clothes) step through "none" too, their first option.
 local function step(screen, part, by)
     local look = lookOf(screen)
     local choices = GielinorBody.choices(look.type, part)
@@ -136,7 +136,7 @@ local function randomise(screen)
     local look = lookOf(screen)
     for _, part in ipairs(GielinorBody.PARTS) do
         local choices = GielinorBody.choices(look.type, part)
-        if #choices > 0 and (part ~= "jaw" or look.type == "A") then
+        if #choices > 0 then
             look.kits[part] = choices[ZombRand(#choices) + 1].kit
         end
     end

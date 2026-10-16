@@ -164,11 +164,21 @@ final class HumanFit {
      * left) at a fixed point in the hand bone's frame, a few centimetres in
      * front of Zomboid's open palm, where its fingers curl round the handle.
      * The game's fists, fitted as they are, sit behind and above it, so
-     * items hung below them. These carry the middle of the game's hands (as
-     * the two body types fit, between them) onto that point.
+     * items hung below them. These carry the middle of each body type's
+     * hands onto that point (right, then left): body type A's, B's, and
+     * between the two for anyone else.
      */
-    private static final double[] RIGHT_TO_GRIP = {-0.010, -0.027, 0.050};
-    private static final double[] LEFT_TO_GRIP = {0.038, -0.049, 0.022};
+    private static final double[][][] TO_GRIP = {
+        {{-0.018, -0.039, 0.053}, {0.046, -0.061, 0.026}},
+        {{-0.002, -0.015, 0.046}, {0.030, -0.037, 0.019}},
+        {{-0.010, -0.027, 0.050}, {0.038, -0.049, 0.022}},
+    };
+    private double[][] toGrip = TO_GRIP[2];
+
+    /** Fits what's fitted next to the player's body type (0 for A, 1 for B, -1 for anyone else). */
+    void bodyType(int type) {
+        toGrip = TO_GRIP[type >= 0 && type < 2 ? type : 2];
+    }
     /**
      * How far down the forearm (as a share of Zomboid's) the game's forearm
      * moves as far as its hand: some of the game's forearms end short of
@@ -184,7 +194,7 @@ final class HumanFit {
      */
     private double[] toGrip(double[] p, String bone) {
         String side = bone.contains("_L_") ? "L" : "R";
-        double[] shift = side.equals("R") ? RIGHT_TO_GRIP : LEFT_TO_GRIP;
+        double[] shift = toGrip[side.equals("R") ? 0 : 1];
         double share = 1;
         if (bone.endsWith("_Forearm")) {
             double[] elbow = skeleton.bind("Bip01_" + side + "_Forearm");

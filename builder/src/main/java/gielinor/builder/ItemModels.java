@@ -227,7 +227,7 @@ final class ItemModels {
             return false;
         }
         String[] parts = bodyParts(part, bounds);
-        pushAlongSurface(part, push, bounds);
+        pushAlongSurface(part, push, bounds, true);
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Files.createDirectories(meshDir);
         part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png",
@@ -298,7 +298,7 @@ final class ItemModels {
         Files.createDirectories(meshDir);
         Files.createDirectories(textureDir);
         GarmentLayout layout = new GarmentLayout(skeleton, cloth);
-        pushAlongSurface(cloth, push, bounds);
+        pushAlongSurface(cloth, push, bounds, false);
         cloth.writeSkinnedX(meshDir.resolve(name + ".X"), name, "x.png", layout::uv, skeleton, bounds);
         java.util.List<String> textures = new java.util.ArrayList<>();
         for (int i = 0; i < choices.length; i++) {
@@ -322,8 +322,8 @@ final class ItemModels {
             lining.faces.add(cloth.faces.get(f));
             lining.colours.add(SharedPalette.shade(0));
         }
-        pushAlongSurface(lining, -push - LINING_IN, bounds);
-        pushAlongSurface(bare, push, bounds);
+        pushAlongSurface(lining, -push - LINING_IN, bounds, false);
+        pushAlongSurface(bare, push, bounds, false);
         int offset = bare.vertices.size();
         bare.vertices.addAll(lining.vertices);
         for (int f = 0; f < lining.faces.size(); f++) {
@@ -481,11 +481,15 @@ final class ItemModels {
     }
 
     /**
-     * Moves each vertex `distance` along its faces' average outward normal
-     * (across its limb only, for a limb's vertex; `bounds` gives each
-     * vertex's bones).
+     * Moves each vertex `distance` along its faces' average outward normal,
+     * or with `acrossLimbs` a limb's vertex across its limb only (`bounds`
+     * gives each vertex's bones). That's for the body, shrunk inside the
+     * clothes: the game's limbs are blocks meeting end to end at the joints,
+     * which shrunk along the limb too would part there. Clothes and the skin
+     * under them keep their whole push, so they stay apart at the ends of
+     * the limbs (a shoulder) as well.
      */
-    private void pushAlongSurface(Mesh mesh, double distance, Bound[] bounds) {
+    private void pushAlongSurface(Mesh mesh, double distance, Bound[] bounds, boolean acrossLimbs) {
         if (distance == 0) {
             return;
         }
@@ -503,10 +507,7 @@ final class ItemModels {
         }
         for (int v = 0; v < mesh.vertices.size(); v++) {
             double[] n = sums[v];
-            // A limb moves only across itself: the game's limbs are blocks
-            // meeting end to end at the joints, and pushed along the limb
-            // too, their ends would part there.
-            double[] axis = limbAxis(bounds[v].bones()[0]);
+            double[] axis = acrossLimbs ? limbAxis(bounds[v].bones()[0]) : null;
             if (axis != null) {
                 n = ModelExporter.sub(n, ModelExporter.scale(axis, ModelExporter.dot(n, axis)));
             }
@@ -547,9 +548,22 @@ final class ItemModels {
         return mesh;
     }
 
+    /** Whether the wardrobe pieces being written are a body's legs or feet, so none of them goes with an arm. */
+    private boolean legsOnly;
+
+    /**
+     * Fits the wardrobe pieces written next to the player's body type (0 for
+     * A, 1 for B, -1 for anything else), and, with `legsOnly`, keeps them off
+     * the arms: a skirt hangs beside the hands, and would go with them.
+     */
+    void fitting(int bodyType, boolean legsOnly) {
+        fit.bodyType(bodyType);
+        this.legsOnly = legsOnly;
+    }
+
     /** Puts a model on Zomboid's skeleton (see {@link HumanFit#fit}), winds its faces Zomboid's way, and returns how each vertex is bound. */
     private Bound[] fitted(Mesh mesh, double crown, boolean findArms, boolean armsAllowed) {
-        Bound[] bounds = fit.fit(mesh, crown, findArms, armsAllowed);
+        Bound[] bounds = fit.fit(mesh, crown, findArms, armsAllowed && !legsOnly);
         if (mesh.outwardVote() >= 0 != outward) {
             mesh.flipWinding();
         }

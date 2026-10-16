@@ -174,6 +174,7 @@ final class Wardrobe {
         for (int type = 0; type < 2; type++) {
             String t = type == 0 ? "A" : "B";
             int base = type * 7;
+            models.fitting(type, false);
             List<Integer> defaults = new ArrayList<>();
             for (int kit : DEFAULT_KITS[type]) {
                 if (kit >= 0) {
@@ -193,6 +194,7 @@ final class Wardrobe {
                 boolean legsRegion = region.name().equals("legs");
                 boolean cutBriefs = legsRegion;
                 double[] cuts = cutBriefs ? new double[]{UNDERWEAR_FROM, UNDERWEAR_TO} : new double[0];
+                models.fitting(type, legsRegion || region.name().equals("feet"));
                 if (models.exportWardrobe(name, region.kits()[type], region.pieces()[type], crown, BODY_IN, skin, SKIN.offered,
                         (source, rgb, height, across) -> {
                             if (cutBriefs && height >= UNDERWEAR_FROM && height < UNDERWEAR_TO && across < UNDERWEAR_ACROSS) {
@@ -205,6 +207,7 @@ final class Wardrobe {
                 }
             }
             lua.append("        },\n");
+            models.fitting(type, false);
 
             // Heads and hair, one pair per hairstyle.
             lua.append("        hair = {\n");
@@ -285,6 +288,7 @@ final class Wardrobe {
             lua.append("        },\n");
 
             // Trousers and shoes.
+            models.fitting(type, true);
             lua.append("        legs = {\n");
             for (KitDefinition kit : byPart.getOrDefault(base + LEGS_PART, List.of())) {
                 String name = "GielinorTrousers_" + kit.getId();
@@ -308,6 +312,7 @@ final class Wardrobe {
                 }
             }
             lua.append("        },\n    },\n");
+            models.fitting(-1, false);
         }
 
         // Each body type's default look.

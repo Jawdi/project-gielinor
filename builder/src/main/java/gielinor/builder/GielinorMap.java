@@ -23,11 +23,15 @@ final class GielinorMap {
     private GielinorMap() {
     }
 
-    /** The part of the world built so far, in the game's map squares (64 by 64 tiles): Lumbridge and around it. */
-    static final int FIRST_SQUARE_X = 48;
-    static final int LAST_SQUARE_X = 53;
-    static final int FIRST_SQUARE_Y = 48;
-    static final int LAST_SQUARE_Y = 53;
+    /**
+     * The world's surface, in the game's map squares (64 by 64 tiles): the
+     * mainland, its islands and the seas around them. Squares beyond it are
+     * the game's instanced areas and dungeons.
+     */
+    static final int FIRST_SQUARE_X = 15;
+    static final int LAST_SQUARE_X = 62;
+    static final int FIRST_SQUARE_Y = 32;
+    static final int LAST_SQUARE_Y = 65;
     /** Each of the game's tiles is this many Zomboid squares across. */
     static final int SCALE = 2;
     /** Where new characters start: the courtyard of Lumbridge castle, in the game's tile coordinates. */
@@ -43,10 +47,45 @@ final class GielinorMap {
     static final int SAFE_RADIUS = 80;
 
     /**
-     * Writes the ground of {@link #FIRST_SQUARE_X} to {@link #LAST_SQUARE_Y}.
-     * The game's world runs north as y grows and Zomboid's south, so rows
-     * are turned over; each game tile becomes {@link #SCALE} by {@link #SCALE}
-     * squares of the matching Zomboid ground.
+     * The ground of the built part of the world, one byte a game tile (the
+     * {@link GielinorTerrain.Ground}'s ordinal plus one, 0 for none), looked
+     * up by Zomboid square. The game's world runs north as y grows and
+     * Zomboid's south, so rows are turned over; each game tile is
+     * {@link #SCALE} by {@link #SCALE} squares.
+     */
+    static final class GroundGrid {
+        final int width;
+        final int height;
+        private final int tilesX;
+        private final int tilesY;
+        private final byte[] tiles;
+
+        GroundGrid(int squaresX, int squaresY) {
+            tilesX = squaresX * 64;
+            tilesY = squaresY * 64;
+            tiles = new byte[tilesX * tilesY];
+            width = tilesX * SCALE;
+            height = tilesY * SCALE;
+        }
+
+        void setTile(int tx, int ty, GielinorTerrain.Ground g) {
+            tiles[tx + ty * tilesX] = (byte) (g.ordinal() + 1);
+        }
+
+        /** The ground at a Zomboid square, or null for none. */
+        GielinorTerrain.Ground at(int zx, int zy) {
+            if (zx < 0 || zy < 0 || zx >= width || zy >= height) {
+                return null;
+            }
+            int b = tiles[zx / SCALE + (tilesY - 1 - zy / SCALE) * tilesX];
+            return b == 0 ? null : GielinorTerrain.Ground.values()[b - 1];
+        }
+    }
+
+    /**
+     * Writes the ground of {@link #FIRST_SQUARE_X} to {@link #LAST_SQUARE_Y}:
+     * the world's ground is read first, then each cell is made and written
+     * in turn, so only one is ever held.
      */
     static void write(Path media, TileDefinitions tiles, GielinorTerrain terrain) throws IOException {
         Path dir = media.resolve("maps").resolve(FOLDER);
@@ -61,19 +100,8 @@ final class GielinorMap {
             }
             floors.put(g, found);
         }
-        int width = (LAST_SQUARE_X - FIRST_SQUARE_X + 1) * 64 * SCALE;
-        int height = (LAST_SQUARE_Y - FIRST_SQUARE_Y + 1) * 64 * SCALE;
-        int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
-        int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
-        MapCell[][] cells = new MapCell[cellsX][cellsY];
-        for (int cx = 0; cx < cellsX; cx++) {
-            for (int cy = 0; cy < cellsY; cy++) {
-                cells[cx][cy] = new MapCell(cx, cy);
-            }
-        }
+        GroundGrid ground = new GroundGrid(LAST_SQUARE_X - FIRST_SQUARE_X + 1, LAST_SQUARE_Y - FIRST_SQUARE_Y + 1);
         Map<GielinorTerrain.Ground, Integer> counts = new EnumMap<>(GielinorTerrain.Ground.class);
-        boolean[][] water = new boolean[width][height];
-        GielinorTerrain.Ground[][] ground = new GielinorTerrain.Ground[width][height];
         for (int sx = FIRST_SQUARE_X; sx <= LAST_SQUARE_X; sx++) {
             for (int sy = FIRST_SQUARE_Y; sy <= LAST_SQUARE_Y; sy++) {
                 MapDefinition square = terrain.square(sx, sy);
@@ -83,45 +111,48 @@ final class GielinorMap {
                 for (int lx = 0; lx < 64; lx++) {
                     for (int ly = 0; ly < 64; ly++) {
                         GielinorTerrain.Ground g = terrain.ground(square.getTiles()[0][lx][ly]);
-                        if (g == null) {
-                            continue;
-                        }
-                        counts.merge(g, 1, Integer::sum);
-                        List<String> choices = floors.get(g);
-                        int zx0 = ((sx - FIRST_SQUARE_X) * 64 + lx) * SCALE;
-                        int zy0 = height - ((sy - FIRST_SQUARE_Y) * 64 + ly + 1) * SCALE;
-                        for (int dx = 0; dx < SCALE; dx++) {
-                            for (int dy = 0; dy < SCALE; dy++) {
-                                int zx = zx0 + dx;
-                                int zy = zy0 + dy;
-                                MapCell cell = cells[zx / MapCell.SIZE][zy / MapCell.SIZE];
-                                // The same square always gets the same of the material's tiles.
-                                int pick = Math.floorMod(scramble(zx, zy), choices.size());
-                                cell.set(zx % MapCell.SIZE, zy % MapCell.SIZE, choices.get(pick));
-                                ground[zx][zy] = g;
-                                if (g == GielinorTerrain.Ground.WATER) {
-                                    cell.setBits(zx % MapCell.SIZE, zy % MapCell.SIZE, MapCell.BIT_WATER);
-                                    water[zx][zy] = true;
-                                }
-                            }
+                        if (g != null) {
+                            counts.merge(g, 1, Integer::sum);
+                            ground.setTile((sx - FIRST_SQUARE_X) * 64 + lx, (sy - FIRST_SQUARE_Y) * 64 + ly, g);
                         }
                     }
                 }
             }
         }
-        // Zombies everywhere but on water and around where characters start.
+        int width = ground.width;
+        int height = ground.height;
+        int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
+        int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
         int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
         int startY = height - (START_Y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
         for (int cx = 0; cx < cellsX; cx++) {
             for (int cy = 0; cy < cellsY; cy++) {
+                MapCell cell = new MapCell(cx, cy);
+                for (int x = 0; x < MapCell.SIZE; x++) {
+                    for (int y = 0; y < MapCell.SIZE; y++) {
+                        int zx = cx * MapCell.SIZE + x;
+                        int zy = cy * MapCell.SIZE + y;
+                        GielinorTerrain.Ground g = ground.at(zx, zy);
+                        if (g == null) {
+                            continue;
+                        }
+                        List<String> choices = floors.get(g);
+                        // The same square always gets the same of the material's tiles.
+                        cell.set(x, y, choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
+                        if (g == GielinorTerrain.Ground.WATER) {
+                            cell.setBits(x, y, MapCell.BIT_WATER);
+                        }
+                    }
+                }
+                // Zombies everywhere but on water and around where characters start.
                 for (int kx = 0; kx < MapCell.CHUNKS; kx++) {
                     for (int ky = 0; ky < MapCell.CHUNKS; ky++) {
                         int wet = 0;
                         for (int x = 0; x < MapCell.CHUNK; x++) {
                             for (int y = 0; y < MapCell.CHUNK; y++) {
-                                int zx = cx * MapCell.SIZE + kx * MapCell.CHUNK + x;
-                                int zy = cy * MapCell.SIZE + ky * MapCell.CHUNK + y;
-                                if (zx < width && zy < height && water[zx][zy]) {
+                                GielinorTerrain.Ground g = ground.at(cx * MapCell.SIZE + kx * MapCell.CHUNK + x,
+                                    cy * MapCell.SIZE + ky * MapCell.CHUNK + y);
+                                if (g == null || g == GielinorTerrain.Ground.WATER) {
                                     wet++;
                                 }
                             }
@@ -130,10 +161,10 @@ final class GielinorMap {
                         int middleY = cy * MapCell.SIZE + ky * MapCell.CHUNK + MapCell.CHUNK / 2;
                         boolean nearStart = Math.hypot(middleX - startX, middleY - startY) < SAFE_RADIUS;
                         boolean onWater = wet > MapCell.CHUNK * MapCell.CHUNK / 2;
-                        cells[cx][cy].setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
+                        cell.setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
                 }
-                cells[cx][cy].write(dir);
+                cell.write(dir);
             }
         }
         writeInfo(dir);
@@ -203,9 +234,9 @@ final class GielinorMap {
      * looks for data where a `worldmap.xml` exists, so an empty one stands
      * beside it.
      */
-    private static void writeWorldMap(Path dir, GielinorTerrain.Ground[][] ground, int cellsX, int cellsY) throws IOException {
-        int width = ground.length;
-        int height = ground[0].length;
+    private static void writeWorldMap(Path dir, GroundGrid ground, int cellsX, int cellsY) throws IOException {
+        int width = ground.width;
+        int height = ground.height;
         List<String> strings = new java.util.ArrayList<>(List.of("Polygon"));
         java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
         int features = 0;
@@ -220,13 +251,13 @@ final class GielinorMap {
                 List<String[]> kinds = new java.util.ArrayList<>();
                 for (int y = y0; y < y1; y++) {
                     for (int x = x0; x < x1; x++) {
-                        GielinorTerrain.Ground g = ground[x][y];
+                        GielinorTerrain.Ground g = ground.at(x, y);
                         String[] feature = g == null ? null : mapFeature(g);
                         if (feature == null || done[x - x0][y - y0]) {
                             continue;
                         }
                         int right = x;
-                        while (right + 1 < x1 && ground[right + 1][y] == g && !done[right + 1 - x0][y - y0]) {
+                        while (right + 1 < x1 && ground.at(right + 1, y) == g && !done[right + 1 - x0][y - y0]) {
                             right++;
                         }
                         int bottom = y;
@@ -245,6 +276,23 @@ final class GielinorMap {
                 if (rects.isEmpty()) {
                     writeInt(bytes, -1);
                     continue;
+                }
+                if (rects.size() > MAX_FEATURES) {
+                    // Keep the largest; the smallest specks go.
+                    Integer[] order = new Integer[rects.size()];
+                    for (int i = 0; i < order.length; i++) {
+                        order[i] = i;
+                    }
+                    List<int[]> all = rects;
+                    java.util.Arrays.sort(order, java.util.Comparator.comparingInt(i -> -area(all.get(i))));
+                    List<int[]> keptRects = new java.util.ArrayList<>();
+                    List<String[]> keptKinds = new java.util.ArrayList<>();
+                    for (int i = 0; i < MAX_FEATURES; i++) {
+                        keptRects.add(rects.get(order[i]));
+                        keptKinds.add(kinds.get(order[i]));
+                    }
+                    rects = keptRects;
+                    kinds = keptKinds;
                 }
                 writeInt(bytes, cx);
                 writeInt(bytes, cy);
@@ -288,11 +336,22 @@ final class GielinorMap {
         System.out.println("  world map: " + features + " features");
     }
 
+    /**
+     * The most features a cell of the map may have. Zomboid keeps where each
+     * feature's points and triangles start as 16-bit numbers, which a cell
+     * of over about 4,000 rectangles would overflow.
+     */
+    private static final int MAX_FEATURES = 4000;
+
+    private static int area(int[] r) {
+        return (r[2] - r[0]) * (r[3] - r[1]);
+    }
+
     /** Whether row `y` from `x` to `right` is all ground `g` and not yet drawn. */
-    private static boolean sameRun(GielinorTerrain.Ground[][] ground, boolean[][] done, int x0, int y0, int x, int right, int y,
+    private static boolean sameRun(GroundGrid ground, boolean[][] done, int x0, int y0, int x, int right, int y,
             GielinorTerrain.Ground g) {
         for (int rx = x; rx <= right; rx++) {
-            if (ground[rx][y] != g || done[rx - x0][y - y0]) {
+            if (ground.at(rx, y) != g || done[rx - x0][y - y0]) {
                 return false;
             }
         }

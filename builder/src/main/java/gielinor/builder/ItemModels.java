@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import net.runelite.cache.definitions.ItemDefinition;
 import net.runelite.cache.definitions.ModelDefinition;
@@ -154,60 +155,187 @@ final class ItemModels {
     static final int SKIN_SOURCE = 4550;
 
     /**
-     * The pieces a body part is split into, so the player's colours can be
-     * laid on it: its own colours, its skin, and the faces the player's
-     * chosen colour (hair, clothing or shoes) takes the place of, in its
-     * first shade and its second. All but the first are white and take their
-     * colour from a tint.
+     * How a face of a body or clothing piece is coloured: one of a
+     * {@link SharedPalette}'s shades, a fixed colour (through
+     * {@link SharedPalette#fixed}), or -1 to leave the face out. `source` is
+     * the colour the game models the face in (packed HSL), `rgb` how it
+     * shows, `height` the face's middle's height in metres once fitted.
      */
-    enum Piece {
-        FIXED("", "fixed"), SKIN("Skin", "skin"), COLOUR("Colour", "colour"), COLOUR2("Colour2", "colour2");
-
-        /** Added to the piece's item and model names. */
-        final String suffix;
-        /** The piece's name in the mod's kit list and its slots. */
-        final String key;
-
-        Piece(String suffix, String key) {
-            this.suffix = suffix;
-            this.key = key;
-        }
+    interface FaceColour {
+        int of(int source, int rgb, double height, double across);
     }
 
     /**
-     * Writes one of the game's body parts (an identity kit: a hairstyle, a
-     * torso, a pair of legs) as up to three pieces named `name` plus each
-     * {@link Piece}'s suffix, hiding the parts of Zomboid's body in `masks`.
-     * Faces modelled in `colourSource` and `secondSource` (packed HSL; -1
-     * for none) go in the colour pieces, skin in the skin piece. `crown` is the whole body's
-     * height, so a body's parts all scale alike. Returns the pieces written.
+     * Writes a piece of a Gielinor body or its clothes made of the game's
+     * identity kits (`kits`: a torso and its sleeves, a hairstyle), fitted to
+     * Zomboid's skeleton at the body's height `crown`. `colour` colours (or
+     * leaves out) each face against `palette`, whose `choices` textures the
+     * piece's clothing definition offers. `push` moves the piece out along its
+     * surface (in metres; in if negative), so clothes sit just over the body
+     * beneath. Returns false if no face is left.
      */
-    java.util.Set<Piece> exportKit(String name, int kit, int colourSource, int secondSource, double crown, java.util.List<Integer> masks, Path media) throws IOException {
-        Mesh mesh = merged(exporter.kitModels(kit), null, null, null);
-        java.util.Set<Piece> written = java.util.EnumSet.noneOf(Piece.class);
+    boolean exportWardrobe(String name, int[] kits, double crown, double push, SharedPalette palette, int choices,
+            FaceColour colour, Path media) throws IOException {
+        return exportWardrobe(name, kits, new int[0], crown, push, palette, choices, colour, false, new double[0], media);
+    }
+
+    /**
+     * The same, with the game's model pieces `pieces` added to the kits'
+     * (such as a creature's bare torso), smooth shaded if `smooth` (see
+     * {@link Mesh#smooth}), and with faces crossing any height in `cuts`
+     * first cut in two there, so a band between cuts can be coloured however
+     * large the model's faces are.
+     */
+    boolean exportWardrobe(String name, int[] kits, int[] pieces, double crown, double push, SharedPalette palette, int choices,
+            FaceColour colour, boolean smooth, double[] cuts, Path media) throws IOException {
+        java.util.List<Integer> models = new java.util.ArrayList<>();
+        for (int kit : kits) {
+            for (int m : exporter.kitModels(kit)) {
+                models.add(m);
+            }
+        }
+        for (int m : pieces) {
+            models.add(m);
+        }
+        Mesh mesh = merged(models.stream().mapToInt(Integer::intValue).toArray(), null, null, null);
         if (mesh.faces.isEmpty()) {
-            return written;
+            return false;
         }
         Bound[] bounds = fitted(mesh, crown, false, true);
-        String hat = masks.contains(0) ? NO_HAIR_OR_BEARD : null;
-        for (Piece piece : Piece.values()) {
-            Mesh part = new Mesh();
-            part.vertices.addAll(mesh.vertices);
-            for (int f = 0; f < mesh.faces.size(); f++) {
-                int source = mesh.sourceColours.get(f);
-                Piece of = source == SKIN_SOURCE ? Piece.SKIN : source == colourSource ? Piece.COLOUR
-                    : source == secondSource ? Piece.COLOUR2 : Piece.FIXED;
-                if (of == piece) {
-                    part.faces.add(mesh.faces.get(f));
-                    part.colours.add(piece == Piece.FIXED ? mesh.colours.get(f) : 0xFFFFFF);
-                }
+        for (double cut : cuts) {
+            bounds = cutAt(mesh, bounds, cut);
+        }
+        Mesh part = new Mesh();
+        part.smooth = smooth;
+        for (double[] v : mesh.vertices) {
+            part.vertices.add(v.clone());
+        }
+        for (int f = 0; f < mesh.faces.size(); f++) {
+            double height = 0;
+            double across = 0;
+            for (int v : mesh.faces.get(f)) {
+                height += mesh.vertices.get(v)[1] / 3;
+                across += Math.abs(mesh.vertices.get(v)[0]) / 3;
             }
-            if (!part.faces.isEmpty()) {
-                writeClothing(name + piece.suffix, part, bounds, masks, hat, piece != Piece.FIXED, media);
-                written.add(piece);
+            int c = colour.of(mesh.sourceColours.get(f), mesh.colours.get(f), height, across);
+            if (c >= 0) {
+                part.faces.add(mesh.faces.get(f));
+                part.colours.add(c);
             }
         }
-        return written;
+        if (part.faces.isEmpty()) {
+            return false;
+        }
+        pushAlongSurface(part, push);
+        Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
+        Files.createDirectories(meshDir);
+        part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png", palette, skeleton, bounds);
+        java.util.List<String> textures = new java.util.ArrayList<>();
+        for (int i = 0; i < choices; i++) {
+            textures.add(palette.name() + "_" + i);
+        }
+        writeClothingDefinition(name, java.util.List.of(), null, false, textures, media);
+        return true;
+    }
+
+    /**
+     * Cuts every face crossing the height `y` into a face on one side and two
+     * on the other, keeping each face's winding and colours. A new vertex
+     * lies on the edge it cuts and moves with the bone of the edge's nearer
+     * end. Returns the bounds with the new vertices'.
+     */
+    private static Bound[] cutAt(Mesh mesh, Bound[] bounds, double y) {
+        List<Bound> all = new java.util.ArrayList<>(java.util.Arrays.asList(bounds));
+        Map<Long, Integer> made = new java.util.HashMap<>();
+        List<int[]> faces = new java.util.ArrayList<>();
+        List<Integer> colours = new java.util.ArrayList<>();
+        List<Integer> sources = new java.util.ArrayList<>();
+        for (int f = 0; f < mesh.faces.size(); f++) {
+            int[] face = mesh.faces.get(f);
+            boolean[] above = new boolean[3];
+            int count = 0;
+            for (int k = 0; k < 3; k++) {
+                above[k] = mesh.vertices.get(face[k])[1] >= y;
+                count += above[k] ? 1 : 0;
+            }
+            List<int[]> pieces = new java.util.ArrayList<>();
+            if (count == 0 || count == 3) {
+                pieces.add(face);
+            } else {
+                // The corner alone on its side, then the other two in winding order.
+                int lone = 0;
+                for (int k = 0; k < 3; k++) {
+                    if (above[k] != above[(k + 1) % 3] && above[k] != above[(k + 2) % 3]) {
+                        lone = k;
+                    }
+                }
+                int l = face[lone];
+                int p = face[(lone + 1) % 3];
+                int q = face[(lone + 2) % 3];
+                int lp = edgePoint(mesh, all, made, l, p, y);
+                int lq = edgePoint(mesh, all, made, l, q, y);
+                pieces.add(new int[]{l, lp, lq});
+                pieces.add(new int[]{lp, p, q});
+                pieces.add(new int[]{lp, q, lq});
+            }
+            for (int[] piece : pieces) {
+                faces.add(piece);
+                colours.add(mesh.colours.get(f));
+                sources.add(mesh.sourceColours.get(f));
+            }
+        }
+        mesh.faces.clear();
+        mesh.faces.addAll(faces);
+        mesh.colours.clear();
+        mesh.colours.addAll(colours);
+        mesh.sourceColours.clear();
+        mesh.sourceColours.addAll(sources);
+        return all.toArray(new Bound[0]);
+    }
+
+    /** The vertex where the edge from `a` to `b` crosses the height `y`, made once per edge. */
+    private static int edgePoint(Mesh mesh, List<Bound> bounds, Map<Long, Integer> made, int a, int b, double y) {
+        long key = (long) Math.min(a, b) << 32 | Math.max(a, b);
+        return made.computeIfAbsent(key, k -> {
+            double[] pa = mesh.vertices.get(a);
+            double[] pb = mesh.vertices.get(b);
+            double t = (y - pa[1]) / (pb[1] - pa[1]);
+            double[] p = {pa[0] + (pb[0] - pa[0]) * t, y, pa[2] + (pb[2] - pa[2]) * t};
+            Bound near = bounds.get(t < 0.5 ? a : b);
+            mesh.vertices.add(p);
+            bounds.add(new Bound(p, near.bones(), near.weights()));
+            return mesh.vertices.size() - 1;
+        });
+    }
+
+    /** Moves each vertex `distance` along its faces' average outward normal. */
+    private void pushAlongSurface(Mesh mesh, double distance) {
+        if (distance == 0) {
+            return;
+        }
+        // Zomboid's meshes are wound one way; a face's normal points out if
+        // they're wound with normals out (see `outward`), else in.
+        double sign = outward ? 1 : -1;
+        double[][] sums = new double[mesh.vertices.size()][3];
+        for (int f = 0; f < mesh.faces.size(); f++) {
+            double[] n = mesh.normal(f);
+            for (int v : mesh.faces.get(f)) {
+                for (int k = 0; k < 3; k++) {
+                    sums[v][k] += n[k];
+                }
+            }
+        }
+        for (int v = 0; v < mesh.vertices.size(); v++) {
+            double[] n = sums[v];
+            double len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+            if (len == 0) {
+                continue;
+            }
+            double[] p = mesh.vertices.get(v);
+            for (int k = 0; k < 3; k++) {
+                p[k] += sign * distance * n[k] / len;
+            }
+        }
     }
 
     /** Models merged into one mesh in game units, recoloured by an item or a creature's definition. */
@@ -339,7 +467,12 @@ final class ItemModels {
         Files.createDirectories(textureDir);
         mesh.writeSkinnedX(meshDir.resolve(name + ".X"), name, name + ".png", palette, skeleton, bounds);
         palette.write(textureDir.resolve(name + ".png"));
+        writeClothingDefinition(name, masks, hatCategory, tintable, java.util.List.of(name), media);
+    }
 
+    /** Writes a clothing definition for the model `name`, offering `textures` (in `textures/Clothes/Gielinor`). */
+    private void writeClothingDefinition(String name, java.util.List<Integer> masks, String hatCategory, boolean tintable,
+            java.util.List<String> textures, Path media) throws IOException {
         String guid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
         String path = "media/clothing/clothingItems/" + name + ".xml";
         clothingGuids.put(path, guid);
@@ -364,7 +497,9 @@ final class ItemModels {
         for (int mask : masks) {
             xml.append("\t<m_Masks>").append(mask).append("</m_Masks>\r\n");
         }
-        xml.append("\t<textureChoices>clothes\\gielinor\\").append(name).append("</textureChoices>\r\n");
+        for (String texture : textures) {
+            xml.append("\t<textureChoices>clothes\\gielinor\\").append(texture).append("</textureChoices>\r\n");
+        }
         xml.append("</clothingItem>\r\n");
         Files.writeString(media.resolve("clothing/clothingItems/" + name + ".xml"), xml);
     }

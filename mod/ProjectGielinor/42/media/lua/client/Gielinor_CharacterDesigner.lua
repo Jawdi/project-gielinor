@@ -1,7 +1,9 @@
 -- Character creation as the game's character designer: Zomboid's name,
 -- body type (male is the game's body type A, female B), voice, profession
 -- and traits stay, while its skin, hair, beard and clothing choices give way
--- to the game's: a style for each body part and its colours.
+-- to the game's: a style for each body part and its colours. The hair and
+-- jaw are the body's; the torso and arms are a top, the legs trousers and
+-- the feet shoes, which the character starts in as ordinary clothes.
 --
 -- Zomboid's own controls are hidden rather than removed, since the rest of
 -- its character creation still reaches for them; the designer is a panel of

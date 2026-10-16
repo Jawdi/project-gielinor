@@ -71,14 +71,16 @@ The builder reads the cache with RuneLite's open-source cache library.
   against bites and scratches by its defence bonuses (a rune platebody about
   57 out of 100). Helmets hide hair as they do in the game.
 - Your character: character creation is the game's character designer. Pick
-  body type A or B, a style for each body part (hair, jaw, torso, arms, hands,
-  legs, feet) and the hair, clothing, shoe and skin colours from the game's
-  palettes. Name, voice, profession and traits stay Zomboid's. Clothing
-  replaces body parts as the game's equipment does: a platebody hides the
-  torso and arms.
-- Zombies: every zombie is one of the game's zombie looks, or now and then
-  one of its human-shaped monsters (goblins, skeletons, guards, barbarians,
-  pirates, knights, ghouls and more).
+  body type A or B, a style for each body part (hair, jaw, torso, arms, legs,
+  feet) and the hair, clothing, shoe and skin colours from the game's
+  palettes. Name, voice, profession and traits stay Zomboid's. As in Zomboid,
+  the body can't be taken off and the clothes can: the torso and arms you pick
+  are a top, the legs trousers, the feet shoes, all ordinary clothing you can
+  take off, drop, swap and loot, with a Gielinor body (in underwear)
+  underneath.
+- Zombies: every zombie is one of Gielinor's folk, zombified: a random look
+  from the character designer, in Gielinor clothes (now and then missing a
+  piece) that drop with the corpse.
 - Animals: Zomboid's cows, chickens, sheep, pigs, rabbits, rats, mice,
   raccoons and deer take the look of their Gielinor counterparts.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a

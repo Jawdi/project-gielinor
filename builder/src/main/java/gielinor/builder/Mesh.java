@@ -32,6 +32,12 @@ final class Mesh {
      * such as an upper arm or a shin. Empty for meshes not read from the game.
      */
     final List<Integer> groups = new ArrayList<>();
+    /**
+     * Whether the mesh is written smooth shaded (each corner's normal the
+     * average of the faces meeting there) rather than flat as the game draws
+     * its models: for skin, so a body's faces don't read as panels of cloth.
+     */
+    boolean smooth;
 
     /** Reads the vertices of the first mesh in a text `.X` file (all a template needs). */
     static Mesh readX(Path file) throws IOException {
@@ -92,7 +98,7 @@ final class Mesh {
      * Writes the mesh as a text `.X` file, each face flat shaded and pointing
      * at its colour's cell in the palette texture `texture`.
      */
-    void writeX(Path file, String name, String texture, Palette palette) throws IOException {
+    void writeX(Path file, String name, String texture, ColourMap palette) throws IOException {
         writeX(file, name, texture, palette, null, null, null);
     }
 
@@ -109,11 +115,11 @@ final class Mesh {
      * first, then the mesh with one `SkinWeights` block per bone used.
      * `bones` names the bone each vertex is bound to.
      */
-    void writeSkinnedX(Path file, String name, String texture, Palette palette, Skeleton skeleton, Bound[] bounds) throws IOException {
+    void writeSkinnedX(Path file, String name, String texture, ColourMap palette, Skeleton skeleton, Bound[] bounds) throws IOException {
         writeX(file, name, texture, palette, null, skeleton, bounds);
     }
 
-    private void writeX(Path file, String name, String texture, Palette palette, FaceAtlas atlas, Skeleton skeleton, Bound[] bounds)
+    private void writeX(Path file, String name, String texture, ColourMap palette, FaceAtlas atlas, Skeleton skeleton, Bound[] bounds)
             throws IOException {
         // With a palette, faces sharing a corner and a colour share the
         // written vertex; with an atlas every face's corners are its own, as
@@ -155,14 +161,39 @@ final class Mesh {
             int[] c = corners.get(i);
             out.append("  3;").append(c[0]).append(',').append(c[1]).append(',').append(c[2]).append(i == n - 1 ? ";;\n" : ";,\n");
         }
-        out.append("\n  MeshNormals {\n   ").append(n).append(";\n");
-        for (int i = 0; i < n; i++) {
-            double[] nm = normal(i);
-            out.append("   ").append(f(nm[0])).append(';').append(f(nm[1])).append(';').append(f(nm[2])).append(i == n - 1 ? ";;\n" : ";,\n");
-        }
-        out.append("   ").append(n).append(";\n");
-        for (int i = 0; i < n; i++) {
-            out.append("   3;").append(i).append(',').append(i).append(',').append(i).append(i == n - 1 ? ";;\n" : ";,\n");
+        if (smooth) {
+            // One normal a written vertex: its corner's faces' normals summed.
+            double[][] sums = new double[vertices.size()][3];
+            for (int i = 0; i < n; i++) {
+                double[] nm = normal(i);
+                for (int v : faces.get(i)) {
+                    for (int k = 0; k < 3; k++) {
+                        sums[v][k] += nm[k];
+                    }
+                }
+            }
+            out.append("\n  MeshNormals {\n   ").append(count).append(";\n");
+            for (int i = 0; i < count; i++) {
+                double[] nm = sums[sources.get(i)];
+                double len = Math.sqrt(nm[0] * nm[0] + nm[1] * nm[1] + nm[2] * nm[2]);
+                double[] u = len == 0 ? new double[]{0, 1, 0} : new double[]{nm[0] / len, nm[1] / len, nm[2] / len};
+                out.append("   ").append(f(u[0])).append(';').append(f(u[1])).append(';').append(f(u[2])).append(i == count - 1 ? ";;\n" : ";,\n");
+            }
+            out.append("   ").append(n).append(";\n");
+            for (int i = 0; i < n; i++) {
+                int[] c = corners.get(i);
+                out.append("   3;").append(c[0]).append(',').append(c[1]).append(',').append(c[2]).append(i == n - 1 ? ";;\n" : ";,\n");
+            }
+        } else {
+            out.append("\n  MeshNormals {\n   ").append(n).append(";\n");
+            for (int i = 0; i < n; i++) {
+                double[] nm = normal(i);
+                out.append("   ").append(f(nm[0])).append(';').append(f(nm[1])).append(';').append(f(nm[2])).append(i == n - 1 ? ";;\n" : ";,\n");
+            }
+            out.append("   ").append(n).append(";\n");
+            for (int i = 0; i < n; i++) {
+                out.append("   3;").append(i).append(',').append(i).append(',').append(i).append(i == n - 1 ? ";;\n" : ";,\n");
+            }
         }
         out.append("  }\n\n  MeshMaterialList {\n   1;\n   ").append(n).append(";\n");
         for (int i = 0; i < n; i++) {

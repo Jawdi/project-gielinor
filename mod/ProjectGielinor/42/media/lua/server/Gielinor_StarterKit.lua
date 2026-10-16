@@ -14,9 +14,10 @@ local kit = {
 }
 
 local function giveKit(player)
-    -- Characters made in the character designer already wear the body they
-    -- chose; any other (made before the mod was on, say) gets the default.
-    if not GielinorBody.isWearing(player) then
+    -- Characters made in the character designer already have the body and
+    -- clothes they chose; any other (made before the mod was on, say) gets
+    -- the default.
+    if GielinorBody.available() and not GielinorBody.bodyOf(player:getHumanVisual()) then
         GielinorBody.dress(player)
     end
     local inventory = player:getInventory()

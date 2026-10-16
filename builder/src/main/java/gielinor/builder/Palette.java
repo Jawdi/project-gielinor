@@ -12,7 +12,7 @@ import javax.imageio.ImageIO;
  * colours each face of a model with one colour; Zomboid models are textured,
  * so each face's texture coordinates point at its colour's cell.
  */
-final class Palette {
+final class Palette implements ColourMap {
     /** Pixels a cell is wide; the coordinates point at a cell's middle so filtering stays inside it. */
     private static final int CELL = 4;
 
@@ -27,7 +27,8 @@ final class Palette {
     }
 
     /** Texture coordinates of a colour's cell. */
-    double[] uv(int rgb) {
+    @Override
+    public double[] uv(int rgb) {
         int cell = cells.getOrDefault(rgb & 0xffffff, 0);
         double u = (cell % side + 0.5) / side;
         double v = (cell / side + 0.5) / side;

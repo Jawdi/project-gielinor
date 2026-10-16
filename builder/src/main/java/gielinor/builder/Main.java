@@ -157,6 +157,11 @@ public final class Main {
      * among Zomboid's zombies. Returns the outfits' `clothing.xml`, and lists
      * their names in `lua/shared/Gielinor_Outfits.lua` so the mod knows them
      * before Zomboid has read its outfits.
+     *
+     * Each piece also gets an item (`scripts/gielinor_undead.txt`), worn in
+     * the `gielinor:figure` slot: Zomboid dresses a character in an outfit's
+     * clothing only through the item that names it, and skips clothing
+     * without one.
      */
     private static String undead(NpcManager npcs, ItemModels itemModels, Path media) throws IOException {
         List<NpcDefinition> all = new ArrayList<>(npcs.getNpcs());
@@ -167,6 +172,7 @@ public final class Main {
         StringBuilder female = new StringBuilder();
         List<String> zombieNames = new ArrayList<>();
         List<String> mobNames = new ArrayList<>();
+        StringBuilder items = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
         for (NpcDefinition n : all) {
             if (n.name == null || n.models == null || n.models.length == 0) {
                 continue;
@@ -186,6 +192,15 @@ public final class Main {
                 continue;
             }
             String guid = itemModels.guidOf(name);
+            items.append("\n    item ").append(name).append("\n    {\n")
+                .append("        DisplayCategory = Clothing,\n")
+                .append("        ItemType = base:clothing,\n")
+                .append("        DisplayName = Gielinor ").append(zombie ? "zombie" : "monster").append(" remains,\n")
+                .append("        Icon = TshirtGeneric,\n")
+                .append("        Weight = 0.5,\n")
+                .append("        BodyLocation = gielinor:figure,\n")
+                .append("        ClothingItem = ").append(name).append(",\n")
+                .append("    }\n");
             String outfitGuid = java.util.UUID.nameUUIDFromBytes(("ProjectGielinor:outfit:" + name).getBytes(StandardCharsets.UTF_8)).toString();
             String outfit = "\t\t<m_Name>Gielinor" + kind + "_" + n.id + "</m_Name>\r\n\t\t<m_Guid>" + outfitGuid + "</m_Guid>\r\n"
                 + "\t\t<m_Top>false</m_Top>\r\n\t\t<m_Pants>false</m_Pants>\r\n"
@@ -200,6 +215,7 @@ public final class Main {
             }
         }
         System.out.println("  zombie looks: " + zombieNames.size() + ", monster looks: " + mobNames.size());
+        Files.writeString(media.resolve("scripts/gielinor_undead.txt"), items.append("}\n"), StandardCharsets.UTF_8);
         Path lua = media.resolve("lua/shared/Gielinor_Outfits.lua");
         Files.createDirectories(lua.getParent());
         Files.writeString(lua, "-- Written by the Project Gielinor Content Builder: the content pack's zombie\n"

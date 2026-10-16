@@ -176,25 +176,32 @@ final class GielinorMap {
     }
 
     /**
-     * Writes `worldmap.xml`, which Zomboid's map (the M key, and the maps
-     * found as loot) draws: per cell, its ground as rectangles of one
-     * feature each, made by running along each row and stacking equal runs
-     * of the rows below onto them. Points are in squares from the cell's
-     * corner.
+     * Writes the map Zomboid shows (the M key, and the maps found as loot):
+     * per cell, its ground as rectangles of one feature each, made by running
+     * along each row and stacking equal runs of the rows below onto them.
+     * Points are in squares from the cell's corner.
+     *
+     * The data goes in `worldmap.xml.bin`, the binary form the game's own
+     * maps ship: Zomboid's reader of the XML form miscounts each polygon's
+     * points (as twice as many) and fails on every one. The map screen only
+     * looks for data where a `worldmap.xml` exists, so an empty one stands
+     * beside it.
      */
     private static void writeWorldMap(Path dir, GielinorTerrain.Ground[][] ground, int cellsX, int cellsY) throws IOException {
         int width = ground.length;
         int height = ground[0].length;
-        StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<world version=\"1.0\">\n");
+        List<String> strings = new java.util.ArrayList<>(List.of("Polygon"));
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
         int features = 0;
-        for (int cx = 0; cx < cellsX; cx++) {
-            for (int cy = 0; cy < cellsY; cy++) {
+        for (int cy = 0; cy < cellsY; cy++) {
+            for (int cx = 0; cx < cellsX; cx++) {
                 int x0 = cx * MapCell.SIZE;
                 int y0 = cy * MapCell.SIZE;
                 int x1 = Math.min(x0 + MapCell.SIZE, width);
                 int y1 = Math.min(y0 + MapCell.SIZE, height);
                 boolean[][] done = new boolean[MapCell.SIZE][MapCell.SIZE];
-                StringBuilder cell = new StringBuilder();
+                List<int[]> rects = new java.util.ArrayList<>();
+                List<String[]> kinds = new java.util.ArrayList<>();
                 for (int y = y0; y < y1; y++) {
                     for (int x = x0; x < x1; x++) {
                         GielinorTerrain.Ground g = ground[x][y];
@@ -215,25 +222,53 @@ final class GielinorMap {
                                 done[rx - x0][ry - y0] = true;
                             }
                         }
-                        int left = x - x0;
-                        int top = y - y0;
-                        int far = right + 1 - x0;
-                        int low = bottom + 1 - y0;
-                        cell.append("  <feature>\n   <geometry type=\"Polygon\">\n    <coordinates>\n")
-                            .append(point(left, top)).append(point(far, top)).append(point(far, low)).append(point(left, low))
-                            .append("    </coordinates>\n   </geometry>\n   <properties>\n")
-                            .append("    <property name=\"").append(feature[0]).append("\" value=\"").append(feature[1]).append("\"/>\n")
-                            .append("   </properties>\n  </feature>\n");
-                        features++;
+                        rects.add(new int[]{x - x0, y - y0, right + 1 - x0, bottom + 1 - y0});
+                        kinds.add(feature);
                     }
                 }
-                if (!cell.isEmpty()) {
-                    xml.append(" <cell x=\"").append(cx).append("\" y=\"").append(cy).append("\">\n").append(cell).append(" </cell>\n");
+                if (rects.isEmpty()) {
+                    writeInt(bytes, -1);
+                    continue;
                 }
+                writeInt(bytes, cx);
+                writeInt(bytes, cy);
+                writeInt(bytes, rects.size());
+                for (int i = 0; i < rects.size(); i++) {
+                    int[] r = rects.get(i);
+                    // Geometry: its type, one ring of four corners.
+                    writeShort(bytes, index(strings, "Polygon"));
+                    bytes.write(1);
+                    writeShort(bytes, 4);
+                    int[][] corners = {{r[0], r[1]}, {r[2], r[1]}, {r[2], r[3]}, {r[0], r[3]}};
+                    for (int[] c : corners) {
+                        writeShort(bytes, c[0]);
+                        writeShort(bytes, c[1]);
+                    }
+                    // Properties: one name and value.
+                    bytes.write(1);
+                    writeShort(bytes, index(strings, kinds.get(i)[0]));
+                    writeShort(bytes, index(strings, kinds.get(i)[1]));
+                }
+                features += rects.size();
             }
         }
-        xml.append("</world>\n");
-        Files.writeString(dir.resolve("worldmap.xml"), xml, StandardCharsets.UTF_8);
+        java.io.ByteArrayOutputStream file = new java.io.ByteArrayOutputStream();
+        file.writeBytes("IGMB".getBytes(StandardCharsets.US_ASCII));
+        writeInt(file, 2);
+        writeInt(file, MapCell.SIZE);
+        writeInt(file, cellsX);
+        writeInt(file, cellsY);
+        writeInt(file, strings.size());
+        for (String s : strings) {
+            byte[] utf = s.getBytes(StandardCharsets.UTF_8);
+            writeShort(file, utf.length);
+            file.writeBytes(utf);
+        }
+        file.writeBytes(bytes.toByteArray());
+        Files.write(dir.resolve("worldmap.xml.bin"), file.toByteArray());
+        Files.writeString(dir.resolve("worldmap.xml"),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- The map's data is in worldmap.xml.bin. -->\n<world version=\"1.0\">\n</world>\n",
+            StandardCharsets.UTF_8);
         System.out.println("  world map: " + features + " features");
     }
 
@@ -248,8 +283,26 @@ final class GielinorMap {
         return true;
     }
 
-    private static String point(int x, int y) {
-        return "     <point x=\"" + x + "\" y=\"" + y + "\"/>\n";
+    /** A string's place in the binary map's string table, adding it if new. */
+    private static int index(List<String> strings, String s) {
+        int i = strings.indexOf(s);
+        if (i < 0) {
+            strings.add(s);
+            i = strings.size() - 1;
+        }
+        return i;
+    }
+
+    /** Little-endian, as the binary map is read. */
+    private static void writeInt(java.io.ByteArrayOutputStream out, int v) {
+        for (int i = 0; i < 4; i++) {
+            out.write(v >>> (8 * i));
+        }
+    }
+
+    private static void writeShort(java.io.ByteArrayOutputStream out, int v) {
+        out.write(v);
+        out.write(v >>> 8);
     }
 
     /** Every profession starts at the one point for now. */

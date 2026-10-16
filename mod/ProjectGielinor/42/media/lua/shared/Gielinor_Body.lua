@@ -52,6 +52,11 @@ for _, part in ipairs(GielinorBody.PARTS) do
         index = index + 1
     end
 end
+-- Zombies and monsters wear their whole figure as one piece.
+local figure = slot("gielinor:figure")
+group:getOrCreateLocation(figure)
+group:moveLocationToIndex(figure, index)
+
 for part, covers in pairs(HIDDEN_BY) do
     for _, cover in ipairs(covers) do
         for _, suffix in pairs(PIECES) do

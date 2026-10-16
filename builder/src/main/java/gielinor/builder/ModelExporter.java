@@ -30,6 +30,11 @@ final class ModelExporter {
     /** The brightness the game draws models at by default. */
     private static final double BRIGHTNESS = JagexColor.BRIGHTNESS_HIGH;
 
+    /** A colour (packed HSL) as the models are written in it. */
+    static int rgb(int hsl) {
+        return JagexColor.HSLtoRGB((short) hsl, BRIGHTNESS);
+    }
+
     private final Store store;
     private final Index models;
     private final ModelLoader loader = new ModelLoader();

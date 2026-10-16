@@ -156,16 +156,21 @@ final class ItemModels {
     /**
      * The pieces a body part is split into, so the player's colours can be
      * laid on it: its own colours, its skin, and the faces the player's
-     * chosen colour (hair, clothing or shoes) takes the place of. The last
-     * two are white and take their colour from a tint.
+     * chosen colour (hair, clothing or shoes) takes the place of, in its
+     * first shade and its second. All but the first are white and take their
+     * colour from a tint.
      */
     enum Piece {
-        FIXED(""), SKIN("Skin"), COLOUR("Colour");
+        FIXED("", "fixed"), SKIN("Skin", "skin"), COLOUR("Colour", "colour"), COLOUR2("Colour2", "colour2");
 
+        /** Added to the piece's item and model names. */
         final String suffix;
+        /** The piece's name in the mod's kit list and its slots. */
+        final String key;
 
-        Piece(String suffix) {
+        Piece(String suffix, String key) {
             this.suffix = suffix;
+            this.key = key;
         }
     }
 
@@ -173,11 +178,11 @@ final class ItemModels {
      * Writes one of the game's body parts (an identity kit: a hairstyle, a
      * torso, a pair of legs) as up to three pieces named `name` plus each
      * {@link Piece}'s suffix, hiding the parts of Zomboid's body in `masks`.
-     * Faces modelled in `colourSource` (packed HSL; -1 for none) go in the
-     * colour piece, skin in the skin piece. `crown` is the whole body's
+     * Faces modelled in `colourSource` and `secondSource` (packed HSL; -1
+     * for none) go in the colour pieces, skin in the skin piece. `crown` is the whole body's
      * height, so a body's parts all scale alike. Returns the pieces written.
      */
-    java.util.Set<Piece> exportKit(String name, int kit, int colourSource, double crown, java.util.List<Integer> masks, Path media) throws IOException {
+    java.util.Set<Piece> exportKit(String name, int kit, int colourSource, int secondSource, double crown, java.util.List<Integer> masks, Path media) throws IOException {
         Mesh mesh = merged(exporter.kitModels(kit), null, null, null);
         java.util.Set<Piece> written = java.util.EnumSet.noneOf(Piece.class);
         if (mesh.faces.isEmpty()) {
@@ -190,7 +195,8 @@ final class ItemModels {
             part.vertices.addAll(mesh.vertices);
             for (int f = 0; f < mesh.faces.size(); f++) {
                 int source = mesh.sourceColours.get(f);
-                Piece of = source == SKIN_SOURCE ? Piece.SKIN : source == colourSource ? Piece.COLOUR : Piece.FIXED;
+                Piece of = source == SKIN_SOURCE ? Piece.SKIN : source == colourSource ? Piece.COLOUR
+                    : source == secondSource ? Piece.COLOUR2 : Piece.FIXED;
                 if (of == piece) {
                     part.faces.add(mesh.faces.get(f));
                     part.colours.add(piece == Piece.FIXED ? mesh.colours.get(f) : 0xFFFFFF);

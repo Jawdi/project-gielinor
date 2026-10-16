@@ -65,6 +65,7 @@ final class GielinorMap {
         }
         Map<GielinorTerrain.Ground, Integer> counts = new EnumMap<>(GielinorTerrain.Ground.class);
         boolean[][] water = new boolean[width][height];
+        GielinorTerrain.Ground[][] ground = new GielinorTerrain.Ground[width][height];
         for (int sx = FIRST_SQUARE_X; sx <= LAST_SQUARE_X; sx++) {
             for (int sy = FIRST_SQUARE_Y; sy <= LAST_SQUARE_Y; sy++) {
                 MapDefinition square = terrain.square(sx, sy);
@@ -89,6 +90,7 @@ final class GielinorMap {
                                 // The same square always gets the same of the material's tiles.
                                 int pick = Math.floorMod(scramble(zx, zy), choices.size());
                                 cell.set(zx % MapCell.SIZE, zy % MapCell.SIZE, choices.get(pick));
+                                ground[zx][zy] = g;
                                 if (g == GielinorTerrain.Ground.WATER) {
                                     cell.setBits(zx % MapCell.SIZE, zy % MapCell.SIZE, MapCell.BIT_WATER);
                                     water[zx][zy] = true;
@@ -123,6 +125,7 @@ final class GielinorMap {
         int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
         int startY = height - (START_Y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
         writeInfo(dir);
+        writeWorldMap(dir, ground, cellsX, cellsY);
         writeSpawnPoints(dir, startX, startY);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
         System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts);
@@ -155,6 +158,98 @@ final class GielinorMap {
             "fixed2x=true",
             "description=The world of Gielinor, built on this machine by the Project Gielinor content builder.",
             ""), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * What the in-game map draws each ground as: the map styles' own
+     * features (water, roads, trails), keyed by the property each is drawn
+     * by. Grass is left as the map's plain background.
+     */
+    private static String[] mapFeature(GielinorTerrain.Ground g) {
+        return switch (g) {
+            case WATER -> new String[]{"water", "river"};
+            case STONE -> new String[]{"highway", "secondary"};
+            case SAND -> new String[]{"highway", "tertiary"};
+            case DIRT -> new String[]{"highway", "trail"};
+            default -> null;
+        };
+    }
+
+    /**
+     * Writes `worldmap.xml`, which Zomboid's map (the M key, and the maps
+     * found as loot) draws: per cell, its ground as rectangles of one
+     * feature each, made by running along each row and stacking equal runs
+     * of the rows below onto them. Points are in squares from the cell's
+     * corner.
+     */
+    private static void writeWorldMap(Path dir, GielinorTerrain.Ground[][] ground, int cellsX, int cellsY) throws IOException {
+        int width = ground.length;
+        int height = ground[0].length;
+        StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<world version=\"1.0\">\n");
+        int features = 0;
+        for (int cx = 0; cx < cellsX; cx++) {
+            for (int cy = 0; cy < cellsY; cy++) {
+                int x0 = cx * MapCell.SIZE;
+                int y0 = cy * MapCell.SIZE;
+                int x1 = Math.min(x0 + MapCell.SIZE, width);
+                int y1 = Math.min(y0 + MapCell.SIZE, height);
+                boolean[][] done = new boolean[MapCell.SIZE][MapCell.SIZE];
+                StringBuilder cell = new StringBuilder();
+                for (int y = y0; y < y1; y++) {
+                    for (int x = x0; x < x1; x++) {
+                        GielinorTerrain.Ground g = ground[x][y];
+                        String[] feature = g == null ? null : mapFeature(g);
+                        if (feature == null || done[x - x0][y - y0]) {
+                            continue;
+                        }
+                        int right = x;
+                        while (right + 1 < x1 && ground[right + 1][y] == g && !done[right + 1 - x0][y - y0]) {
+                            right++;
+                        }
+                        int bottom = y;
+                        while (bottom + 1 < y1 && sameRun(ground, done, x0, y0, x, right, bottom + 1, g)) {
+                            bottom++;
+                        }
+                        for (int ry = y; ry <= bottom; ry++) {
+                            for (int rx = x; rx <= right; rx++) {
+                                done[rx - x0][ry - y0] = true;
+                            }
+                        }
+                        int left = x - x0;
+                        int top = y - y0;
+                        int far = right + 1 - x0;
+                        int low = bottom + 1 - y0;
+                        cell.append("  <feature>\n   <geometry type=\"Polygon\">\n    <coordinates>\n")
+                            .append(point(left, top)).append(point(far, top)).append(point(far, low)).append(point(left, low))
+                            .append("    </coordinates>\n   </geometry>\n   <properties>\n")
+                            .append("    <property name=\"").append(feature[0]).append("\" value=\"").append(feature[1]).append("\"/>\n")
+                            .append("   </properties>\n  </feature>\n");
+                        features++;
+                    }
+                }
+                if (!cell.isEmpty()) {
+                    xml.append(" <cell x=\"").append(cx).append("\" y=\"").append(cy).append("\">\n").append(cell).append(" </cell>\n");
+                }
+            }
+        }
+        xml.append("</world>\n");
+        Files.writeString(dir.resolve("worldmap.xml"), xml, StandardCharsets.UTF_8);
+        System.out.println("  world map: " + features + " features");
+    }
+
+    /** Whether row `y` from `x` to `right` is all ground `g` and not yet drawn. */
+    private static boolean sameRun(GielinorTerrain.Ground[][] ground, boolean[][] done, int x0, int y0, int x, int right, int y,
+            GielinorTerrain.Ground g) {
+        for (int rx = x; rx <= right; rx++) {
+            if (ground[rx][y] != g || done[rx - x0][y - y0]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String point(int x, int y) {
+        return "     <point x=\"" + x + "\" y=\"" + y + "\"/>\n";
     }
 
     /** Every profession starts at the one point for now. */

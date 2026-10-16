@@ -9,9 +9,15 @@
 --   becomes Gielinor's alone, and the special places (police stations, shops,
 --   weddings and so on) lose their own outfits, so they draw from it too.
 -- * Some are dressed directly in a named outfit (a police car's crew, say).
---   Those are dressed again as they're made.
+--   Those are dressed again.
 -- * Zomboid gives every zombie random underwear, cut for its own body, which
 --   would show through Gielinor's slimmer figures; it's taken off.
+--
+-- Zomboid dresses a zombie after it's made, not as it's made: it marks the
+-- zombie to be dressed when first drawn, and the first time an outfit is
+-- used its clothes load in the background and the zombie is dressed (with
+-- fresh underwear) again once they have. So zombies are checked as they
+-- update, the modding guides' way, rather than as they're made.
 
 require "NPCs/ZombiesZoneDefinition"
 require "Gielinor_Outfits"
@@ -73,21 +79,31 @@ local function stripOthers(zombie)
     end
 end
 
-local function onZombieCreate(zombie)
+-- How often (one update in this many) a zombie in a Gielinor outfit is
+-- checked for clothes Zomboid has added since.
+local STRIP_EVERY = 30
+
+local function onZombieUpdate(zombie)
     if isClient() or zombie:isSkeleton() then
         return
     end
     if not isGielinor(zombie:getOutfitName()) then
         zombie:dressInPersistentOutfit(randomOutfit())
+        stripOthers(zombie)
+        zombie:resetModelNextFrame()
+    elseif ZombRand(STRIP_EVERY) == 0 then
+        local before = zombie:getItemVisuals():size()
+        stripOthers(zombie)
+        if zombie:getItemVisuals():size() ~= before then
+            zombie:resetModelNextFrame()
+        end
     end
-    stripOthers(zombie)
-    zombie:resetModelNextFrame()
 end
 
 if haveOutfits() then
     replaceDefaultMix()
     emptyZones()
-    Events.OnZombieCreate.Add(onZombieCreate)
+    Events.OnZombieUpdate.Add(onZombieUpdate)
     print("Project Gielinor: every zombie is one of " .. #GielinorOutfits.zombies .. " zombie looks and " .. #GielinorOutfits.monsters .. " monster looks")
 else
     print("Project Gielinor: no zombie outfits found. Build the content pack with the Project Gielinor Content Builder.")

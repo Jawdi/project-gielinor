@@ -10,8 +10,9 @@ import java.util.Map;
  * and the like) on Zomboid's skeleton the way the game itself animates them:
  * each of a model's animation groups (an upper arm, a shin, a head) moves
  * rigidly with one bone. The model keeps its own shape, scaled to Zomboid's
- * height; only its arms turn about the shoulders, from however the model
- * holds them up into Zomboid's T-pose, which the skeleton's bind pose is in.
+ * height; only its limbs turn, the arms about the shoulders from however the
+ * model holds them into Zomboid's T-pose, and the legs about the hips from
+ * straight down into the splay of Zomboid's bind pose.
  *
  * Both games face their models along -z with the right side at -x, so no
  * axis is mirrored.
@@ -69,8 +70,12 @@ final class HumanFit {
         for (double[] v : mesh.vertices) {
             points.add(new double[]{v[0] * s, -v[1] * s, v[2] * s});
         }
-        // Each arm turns about its shoulder from the model's pose to the
-        // T-pose: `turns` holds the turn from the T-pose to the model's.
+        // Each limb turns about its joint with the body from the model's pose
+        // to the bind pose: `turns` holds the turn from the bind pose to the
+        // model's. Arms go from the T-pose to however the model holds them;
+        // legs from Zomboid's, which splay out to the feet, to the game's,
+        // which hang straight down. Left as they are, the game's legs sit
+        // inside Zomboid's, and cross as Zomboid's walk swings them in.
         Map<String, double[][]> turns = new HashMap<>();
         for (String side : new String[]{"L", "R"}) {
             double[] shoulder = skeleton.bind("Bip01_" + side + "_UpperArm");
@@ -78,15 +83,18 @@ final class HumanFit {
             double[] tpose = unit(ModelExporter.sub(skeleton.bind("Bip01_" + side + "_Forearm"), shoulder));
             double[] hang = unit(new double[]{0.12 * sign, -1, 0});
             double[] target = findArms ? armDirection(points, shoulder, sign, hang) : hang;
-            turns.put(side, rotation(tpose, target));
+            turns.put(side + "_Arm", rotation(tpose, target));
+            double[] hip = skeleton.bind("Bip01_" + side + "_Thigh");
+            double[] splay = unit(ModelExporter.sub(skeleton.bind("Bip01_" + side + "_Foot"), hip));
+            turns.put(side + "_Leg", rotation(splay, new double[]{0, -1, 0}));
         }
-        // The bones as the model stands: arms turned to its pose.
+        // The bones as the model stands: limbs turned to its pose.
         List<Bone> posed = new ArrayList<>();
         for (Bone b : bones) {
             if (armsAllowed || !isArm(b.name)) {
-                String side = isArm(b.name) ? side(b.name) : null;
-                posed.add(side == null ? b : new Bone(b.name,
-                    turn(b.from, turns.get(side), shoulder(side)), turn(b.to, turns.get(side), shoulder(side))));
+                String limb = limb(b.name);
+                posed.add(limb == null ? b : new Bone(b.name,
+                    turn(b.from, turns.get(limb), joint(limb)), turn(b.to, turns.get(limb), joint(limb))));
             }
         }
         // Each animation group goes with the bone nearest its middle; a
@@ -110,9 +118,10 @@ final class HumanFit {
             String bone = group >= 0
                 ? groupBones.computeIfAbsent(group, g -> nearest(posed, middle(middles.get(g))))
                 : nearest(posed, p);
-            if (isArm(bone)) {
-                // Back from the model's pose into the T-pose.
-                p = turn(p, transpose(turns.get(side(bone))), shoulder(side(bone)));
+            String limb = limb(bone);
+            if (limb != null) {
+                // Back from the model's pose into the bind pose.
+                p = turn(p, transpose(turns.get(limb)), joint(limb));
             }
             out[i] = new Bound(p, new String[]{bone}, new double[]{1});
             mesh.vertices.set(i, p);
@@ -148,16 +157,23 @@ final class HumanFit {
         return out ? unit(reach) : hang;
     }
 
-    private double[] shoulder(String side) {
-        return skeleton.bind("Bip01_" + side + "_UpperArm");
+    /** The limb a bone is part of ("L_Arm", "R_Leg"), or null for the body and head. */
+    private static String limb(String bone) {
+        String side = bone.contains("_L_") ? "L" : bone.contains("_R_") ? "R" : null;
+        if (side == null) {
+            return null;
+        }
+        return side + (isArm(bone) ? "_Arm" : "_Leg");
+    }
+
+    /** Where a limb joins the body: its shoulder or hip. */
+    private double[] joint(String limb) {
+        String side = limb.substring(0, 1);
+        return skeleton.bind("Bip01_" + side + (limb.endsWith("Arm") ? "_UpperArm" : "_Thigh"));
     }
 
     private static boolean isArm(String bone) {
         return bone.contains("UpperArm") || bone.contains("Forearm") || bone.contains("Hand");
-    }
-
-    private static String side(String bone) {
-        return bone.contains("_L_") ? "L" : "R";
     }
 
     private static String nearest(List<Bone> bones, double[] p) {

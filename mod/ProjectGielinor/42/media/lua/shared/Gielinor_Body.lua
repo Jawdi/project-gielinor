@@ -7,24 +7,24 @@
 -- arms, gloves the hands, trousers the legs, shoes the feet.
 --
 -- A look is { type = "A" or "B", kits = { part = kit id }, colours = {
--- hair, torso, legs, feet, skin = palette index } }.
+-- hair, torso, legs, feet, skin = choice } }, each colour a choice from
+-- GielinorKits.colours.
 
 require "NPCs/BodyLocations"
 require "Gielinor_Kits"
-require "Gielinor_Palettes"
 
 GielinorBody = GielinorBody or {}
 
 GielinorBody.PARTS = {"hair", "jaw", "torso", "arms", "hands", "legs", "feet"}
 
--- The palette and colour each part's chosen colour comes from.
+-- The colour each part takes.
 GielinorBody.COLOUR_OF = {
-    hair = {"hair", "hair"},
-    jaw = {"hair", "hair"},
-    torso = {"clothing", "torso"},
-    arms = {"clothing", "torso"},
-    legs = {"clothing", "legs"},
-    feet = {"shoes", "feet"},
+    hair = "hair",
+    jaw = "hair",
+    torso = "torso",
+    arms = "torso",
+    legs = "legs",
+    feet = "feet",
 }
 
 -- The slots whose clothing hides each part.
@@ -36,7 +36,7 @@ local HIDDEN_BY = {
     feet = {"base:shoes"},
 }
 
-local PIECES = {fixed = "", skin = "_skin", colour = "_colour"}
+local PIECES = {fixed = "", skin = "_skin", colour = "_colour", colour2 = "_colour2"}
 
 local function slot(name)
     return ItemBodyLocation.get(ResourceLocation.of(name))
@@ -62,7 +62,7 @@ end
 
 --- Whether the content pack has body parts to dress anyone in.
 function GielinorBody.available()
-    return GielinorKits ~= nil and GielinorKits.A ~= nil
+    return GielinorKits ~= nil and GielinorKits.A ~= nil and GielinorKits.colours ~= nil
 end
 
 --- A body type's default look.
@@ -88,20 +88,20 @@ local function findKit(type, part, id)
     end
 end
 
+--- A colour choice's two shades as red, green and blue from 0 to 1.
+function GielinorBody.rgb(key, choice, second)
+    local choices = GielinorKits.colours[key]
+    local shades = choices[choice] or choices[1]
+    local value = second and shades[2] or shades[1]
+    return math.floor(value / 65536) % 256 / 255, math.floor(value / 256) % 256 / 255, value % 256 / 255
+end
+
 local function colourOf(look, part, piece)
-    local palette, key
-    if piece == "skin" then
-        palette, key = "skin", "skin"
-    else
-        local which = GielinorBody.COLOUR_OF[part]
-        if not which then
-            return nil
-        end
-        palette, key = which[1], which[2]
+    local key = piece == "skin" and "skin" or GielinorBody.COLOUR_OF[part]
+    if not key then
+        return nil
     end
-    local colours = GielinorPalettes[palette]
-    local value = colours[look.colours[key] or 1] or colours[1]
-    local r, g, b = GielinorPalettes.rgb(value)
+    local r, g, b = GielinorBody.rgb(key, look.colours[key] or 1, piece == "colour2")
     return ImmutableColor.new(r, g, b, 1)
 end
 

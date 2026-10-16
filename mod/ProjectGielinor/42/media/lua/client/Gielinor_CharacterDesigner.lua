@@ -19,13 +19,13 @@ local SPACING = 10
 local PART_NAMES = {
     hair = "Hair", jaw = "Jaw", torso = "Torso", arms = "Arms", hands = "Hands", legs = "Legs", feet = "Feet",
 }
--- The colours a player picks: the palette each comes from, and its label.
+-- The colours a player picks, by their key in GielinorKits.colours.
 local COLOURS = {
-    {key = "hair", palette = "hair", name = "Hair colour"},
-    {key = "torso", palette = "clothing", name = "Torso colour"},
-    {key = "legs", palette = "clothing", name = "Legs colour"},
-    {key = "feet", palette = "shoes", name = "Feet colour"},
-    {key = "skin", palette = "skin", name = "Skin colour"},
+    {key = "hair", name = "Hair colour"},
+    {key = "torso", name = "Torso colour"},
+    {key = "legs", name = "Legs colour"},
+    {key = "feet", name = "Feet colour"},
+    {key = "skin", name = "Skin colour"},
 }
 
 GielinorDesigner = {}
@@ -79,7 +79,7 @@ function GielinorDesigner.refresh(screen)
         row.value:setName(count == 0 and "-" or at == 0 and "None" or (at .. " / " .. count))
     end
     for _, c in ipairs(COLOURS) do
-        local r, g, b = GielinorPalettes.rgb(GielinorPalettes[c.palette][look.colours[c.key] or 1])
+        local r, g, b = GielinorBody.rgb(c.key, look.colours[c.key] or 1)
         ui.colours[c.key].backgroundColor = {r = r, g = g, b = b, a = 1}
     end
 end
@@ -95,7 +95,13 @@ local function step(screen, part, by)
     local bare = part == "jaw"
     local first = bare and 0 or 1
     local count = #choices - first + 1
-    local at = (position(look, part) - first + by) % count + first
+    -- Kahlua's % keeps the sign of the number divided, so wrap by hand.
+    local at = position(look, part) + by
+    if at < first then
+        at = at + count
+    elseif at > #choices then
+        at = at - count
+    end
     look.kits[part] = at > 0 and choices[at].kit or nil
     GielinorDesigner.apply(screen)
 end
@@ -106,11 +112,11 @@ local function onColourPicked(screen, color, mouseUp, key)
     GielinorDesigner.apply(screen)
 end
 
-local function pickColour(screen, button, key, palette)
+local function pickColour(screen, button, key)
     local ui = screen.gielinorDesigner
     local colours = {}
-    for _, value in ipairs(GielinorPalettes[palette]) do
-        local r, g, b = GielinorPalettes.rgb(value)
+    for i = 1, #GielinorKits.colours[key] do
+        local r, g, b = GielinorBody.rgb(key, i)
         table.insert(colours, {r = r, g = g, b = b})
     end
     local columns = math.min(#colours, 8)
@@ -118,7 +124,7 @@ local function pickColour(screen, button, key, palette)
     ui.picker:setX(button:getAbsoluteX())
     ui.picker:setY(button:getAbsoluteY() + button:getHeight())
     ui.picker:setPickedFunc(onColourPicked, key)
-    local r, g, b = GielinorPalettes.rgb(GielinorPalettes[palette][lookOf(screen).colours[key] or 1])
+    local r, g, b = GielinorBody.rgb(key, lookOf(screen).colours[key] or 1)
     ui.picker:setInitialColor(ColorInfo.new(r, g, b, 1))
     screen:showColorPicker(ui.picker)
 end
@@ -133,7 +139,7 @@ local function randomise(screen)
         end
     end
     for _, c in ipairs(COLOURS) do
-        look.colours[c.key] = ZombRand(#GielinorPalettes[c.palette]) + 1
+        look.colours[c.key] = ZombRand(#GielinorKits.colours[c.key]) + 1
     end
     GielinorDesigner.apply(screen)
 end
@@ -194,7 +200,7 @@ local function build(screen)
         label:initialise()
         panel:addChild(label)
         local swatch = ISButton:new(labelWidth, y, BUTTON_HGT * 2, BUTTON_HGT, "", screen, function(target, button)
-            pickColour(target, button, c.key, c.palette)
+            pickColour(target, button, c.key)
         end)
         swatch:initialise()
         panel:addChild(swatch)

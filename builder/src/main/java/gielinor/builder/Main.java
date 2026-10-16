@@ -285,23 +285,55 @@ public final class Main {
     /**
      * A part of a Gielinor body as the game's character designer offers it:
      * its name (and slot, `gielinor:<name>`), the game's number for it on
-     * body type A (body type B's is 7 more), the colour the player's chosen
-     * colour (hair, clothing or shoes) takes the place of (-1 for none), and
-     * the parts of Zomboid's body it hides. Separate parts let clothing
-     * replace them as the game's equipment does: a platebody hides the torso
-     * and arms, platelegs the legs.
+     * body type A (body type B's is 7 more), which of the player's colours
+     * it takes (null for none), and the parts of Zomboid's body it hides.
+     * Separate parts let clothing replace them as the game's equipment does:
+     * a platebody hides the torso and arms, platelegs the legs.
      */
-    private record BodyPart(String name, int part, int colourSource, List<Integer> masks) {
+    private record BodyPart(String name, int part, String colour, List<Integer> masks) {
     }
 
     private static final List<BodyPart> BODY_PARTS = List.of(
-        new BodyPart("hair", 0, 6798, List.of(0)),
-        new BodyPart("jaw", 1, 6798, List.of()),
-        new BodyPart("torso", 2, 8741, List.of(1)),
-        new BodyPart("arms", 3, 8741, List.of(3, 5)),
-        new BodyPart("hands", 4, -1, List.of(4, 6)),
-        new BodyPart("legs", 5, 25238, List.of(2, 7, 9)),
-        new BodyPart("feet", 6, 4626, List.of(8, 10)));
+        new BodyPart("hair", 0, "hair", List.of(0)),
+        new BodyPart("jaw", 1, "hair", List.of()),
+        new BodyPart("torso", 2, "torso", List.of(1)),
+        new BodyPart("arms", 3, "torso", List.of(3, 5)),
+        new BodyPart("hands", 4, null, List.of(4, 6)),
+        new BodyPart("legs", 5, "legs", List.of(2, 7, 9)),
+        new BodyPart("feet", 6, "feet", List.of(8, 10)));
+
+    /**
+     * One of the colours a player picks, as the game's client recolours its
+     * body models: the colour (packed HSL) the kits are modelled in and what
+     * each choice turns it into, and the same for a second shade some kits
+     * use alongside it (-1 and none where no kit does). The designer offers
+     * the first `offered` choices; the rest are unlocked in the game.
+     */
+    private record BodyColour(String name, int source, short[] choices, int secondSource, short[] secondChoices, int offered) {
+    }
+
+    private static final List<BodyColour> BODY_COLOURS = List.of(
+        new BodyColour("hair", 6798,
+            new short[]{6798, 107, 10283, 16, 4797, 7744, 5799, 4634, -31839, 22433, 2983, -11343, 8, 5281, 10438, 3650, -27322, -21845, 200, 571, 908, 21830, 28946, -15701, -14010},
+            -10304 & 0xffff,
+            new short[]{6554, 115, 10304, 28, 5702, 7756, 5681, 4510, -31835, 22437, 2859, -11339, 16, 5157, 10446, 3658, -27314, -21965, 472, 580, 784, 21966, 28950, -15697, -14002},
+            25),
+        new BodyColour("torso", 8741,
+            new short[]{8741, 12, -1506, -22374, 7735, 8404, 1701, -27106, 24094, 10153, -8915, 4783, 1341, 16578, -30533, 25239, 8, 5281, 10438, 3650, -27322, -21845, 200, 571, 908, 21830, 28946, -15701, -14010},
+            9104,
+            new short[]{9104, 10275, 7595, 3610, 7975, 8526, 918, -26734, 24466, 10145, -6882, 5027, 1457, 16565, -30545, 25486, 24, 5392, 10429, 3673, -27335, -21957, 192, 687, 412, 21821, 28835, -15460, -14019},
+            29),
+        new BodyColour("legs", 25238,
+            new short[]{25238, 8742, 12, -1506, -22374, 7735, 8404, 1701, -27106, 24094, 10153, -8915, 4783, 1341, 16578, -30533, 8, 5281, 10438, 3650, -27322, -21845, 200, 571, 908, 21830, 28946, -15701, -14010},
+            -1, new short[0], 29),
+        new BodyColour("feet", 4626, new short[]{4626, 11146, 6439, 12, 4758, 10270}, -1, new short[0], 6),
+        new BodyColour("skin", ItemModels.SKIN_SOURCE,
+            new short[]{4550, 4537, 5681, 5673, 5790, 6806, 8076, 4574, 17050, 0, 127, -31821, -17991},
+            -1, new short[0], 8));
+
+    private static BodyColour bodyColour(String name) {
+        return BODY_COLOURS.stream().filter(c -> c.name.equals(name)).findFirst().orElse(null);
+    }
 
     /** Each body type's default look, by kit, in {@link #BODY_PARTS}' order (-1: none). */
     private static final int[][] DEFAULT_KITS = {
@@ -340,15 +372,17 @@ public final class Main {
             }
             int type = kit.bodyPartId / 7;
             BodyPart part = BODY_PARTS.get(kit.bodyPartId % 7);
+            BodyColour colour = part.colour == null ? null : bodyColour(part.colour);
             String name = "Gielinor_Kit" + kit.getId();
-            java.util.Set<ItemModels.Piece> pieces = itemModels.exportKit(name, kit.getId(), part.colourSource, crowns[type], part.masks, media);
+            java.util.Set<ItemModels.Piece> pieces = itemModels.exportKit(name, kit.getId(), colour == null ? -1 : colour.source,
+                colour == null ? -1 : colour.secondSource, crowns[type], part.masks, media);
             if (pieces.isEmpty()) {
                 continue;
             }
             StringBuilder entry = new StringBuilder("            { kit = " + kit.getId());
             for (ItemModels.Piece piece : pieces) {
                 String item = "GielinorKit" + kit.getId() + piece.suffix;
-                String slot = "gielinor:" + part.name + (piece == ItemModels.Piece.FIXED ? "" : "_" + piece.name().toLowerCase());
+                String slot = "gielinor:" + part.name + (piece == ItemModels.Piece.FIXED ? "" : "_" + piece.key);
                 script.append("\n    item ").append(item).append("\n    {\n")
                     .append("        DisplayCategory = Clothing,\n")
                     .append("        ItemType = base:clothing,\n")
@@ -358,7 +392,7 @@ public final class Main {
                     .append("        BodyLocation = ").append(slot).append(",\n")
                     .append("        ClothingItem = ").append(name).append(piece.suffix).append(",\n")
                     .append("    }\n");
-                entry.append(", ").append(piece.name().toLowerCase()).append(" = \"").append(MODULE).append('.').append(item).append('"');
+                entry.append(", ").append(piece.key).append(" = \"").append(MODULE).append('.').append(item).append('"');
             }
             parts.computeIfAbsent((type == 0 ? "A" : "B") + "." + part.name, k -> new StringBuilder())
                 .append(entry).append(" },\n");
@@ -381,6 +415,19 @@ public final class Main {
                 }
             }
             lua.append(" },\n");
+        }
+        lua.append("    },\n");
+        // The colours as the game's client shows them: each choice's colour
+        // and its second shade (the first again where there's none).
+        lua.append("    colours = {\n");
+        for (BodyColour colour : BODY_COLOURS) {
+            lua.append("        ").append(colour.name).append(" = {\n");
+            for (int i = 0; i < colour.offered; i++) {
+                int first = ModelExporter.rgb(colour.choices[i] & 0xffff);
+                int second = i < colour.secondChoices.length ? ModelExporter.rgb(colour.secondChoices[i] & 0xffff) : first;
+                lua.append(String.format("            {0x%06x, 0x%06x},", first, second)).append('\n');
+            }
+            lua.append("        },\n");
         }
         lua.append("    },\n}\n");
         Path file = media.resolve("lua/shared/Gielinor_Kits.lua");

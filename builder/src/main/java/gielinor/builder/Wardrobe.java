@@ -93,7 +93,8 @@ final class Wardrobe {
     }
 
     private static final List<Region> REGIONS = List.of(
-        new Region("upper", new int[][]{{27}, {}}, new int[][]{{315}, {11783, 11772}}),
+        new Region("torso", new int[][]{{}, {}}, new int[][]{{315}, {11783}}),
+        new Region("arms", new int[][]{{27}, {}}, new int[][]{{}, {11772}}),
         new Region("hands", new int[][]{{33}, {67}}, new int[][]{{}, {}}),
         new Region("legs", new int[][]{{36}, {70}}, new int[][]{{}, {}}),
         new Region("feet", new int[][]{{42}, {79}}, new int[][]{{}, {}}));
@@ -227,19 +228,23 @@ final class Wardrobe {
             }
             lua.append("        },\n");
 
-            // Tops: every torso with every pair of sleeves, as one item.
+            // Tops: every torso with every pair of sleeves, as one item, and
+            // every torso without (sleeveless, sleeves "0"), the arms bare.
             List<KitDefinition> torsos = byPart.getOrDefault(base + TORSO_PART, List.of());
             List<KitDefinition> arms = byPart.getOrDefault(base + ARMS_PART, List.of());
             lua.append("        torso = {").append(ids(torsos)).append("},\n");
             lua.append("        arms = {").append(ids(arms)).append("},\n");
             lua.append("        tops = {\n");
             for (KitDefinition torso : torsos) {
-                for (KitDefinition sleeves : arms) {
-                    String name = "GielinorTop_" + torso.getId() + "_" + sleeves.getId();
-                    if (models.exportWardrobe(name, new int[]{torso.getId(), sleeves.getId()}, crown, CLOTHES_OUT, tops, TORSO.offered * SKIN.offered,
+                List<Integer> sleeveIds = new ArrayList<>(List.of(0));
+                arms.forEach(k -> sleeveIds.add(k.getId()));
+                for (int sleeves : sleeveIds) {
+                    String name = "GielinorTop_" + torso.getId() + "_" + sleeves;
+                    int[] kits = sleeves == 0 ? new int[]{torso.getId()} : new int[]{torso.getId(), sleeves};
+                    if (models.exportWardrobe(name, kits, crown, CLOTHES_OUT, tops, TORSO.offered * SKIN.offered,
                             (source, rgb, height, across) -> clothing(source, rgb, TORSO), media)) {
-                        script.append(item(name, "Gielinor top", CLOTHES_TOP));
-                        lua.append("            [\"").append(torso.getId()).append('_').append(sleeves.getId())
+                        script.append(item(name, "Gielinor top", sleeves == 0 ? CLOTHES_VEST : CLOTHES_TOP));
+                        lua.append("            [\"").append(torso.getId()).append('_').append(sleeves)
                             .append("\"] = \"").append(MODULE).append('.').append(name).append("\",\n");
                         counted++;
                     }
@@ -381,6 +386,16 @@ final class Wardrobe {
                 FabricType = Cotton,
                 Insulation = 0.25,
                 WindResistance = 0.15,
+                WorldStaticModel = Shirt_Ground,
+                Tags = base:ripclothingcotton,
+        """;
+    private static final String CLOTHES_VEST = """
+                Icon = ShirtGeneric,
+                BloodLocation = ShirtNoSleeves,
+                BodyLocation = base:shirt,
+                FabricType = Cotton,
+                Insulation = 0.15,
+                WindResistance = 0.1,
                 WorldStaticModel = Shirt_Ground,
                 Tags = base:ripclothingcotton,
         """;

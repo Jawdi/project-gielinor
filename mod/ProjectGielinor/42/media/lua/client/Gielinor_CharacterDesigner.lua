@@ -86,15 +86,15 @@ function GielinorDesigner.refresh(screen)
     end
 end
 
---- Steps a part to its next or previous style; parts that may be left
---- bare (the jaw) step through "none" too.
+--- Steps a part to its next or previous style; parts that may be left out
+--- (the jaw, and the clothes) step through "none" too, their first option.
 local function step(screen, part, by)
     local look = lookOf(screen)
     local choices = GielinorBody.choices(look.type, part)
     if #choices == 0 then
         return
     end
-    local bare = part == "jaw"
+    local bare = GielinorBody.OPTIONAL[part]
     local first = bare and 0 or 1
     local count = #choices - first + 1
     -- Kahlua's % keeps the sign of the number divided, so wrap by hand.

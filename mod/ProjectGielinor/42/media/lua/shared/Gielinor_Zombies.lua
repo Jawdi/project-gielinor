@@ -81,9 +81,7 @@ local function makeGielinor(zombie)
         keeps[piece] = random(100) <= chance
     end
     for _, piece in ipairs(GielinorBody.clothes(look)) do
-        local region = GielinorBody.regionCoveredBy(piece[1])
-        local kept = region == "upper" and keeps.top or region == "legs" and keeps.legs or region == "feet" and keeps.feet
-        local scriptItem = kept and getScriptManager():FindItem(piece[1])
+        local scriptItem = keeps[GielinorBody.clothingKind(piece[1])] and getScriptManager():FindItem(piece[1])
         if scriptItem then
             local added = visual:addClothingItem(itemVisuals, scriptItem)
             if added then
@@ -93,10 +91,7 @@ local function makeGielinor(zombie)
     end
     local covered = {}
     for i = 0, itemVisuals:size() - 1 do
-        local region = GielinorBody.regionCoveredBy(itemVisuals:get(i):getItemType())
-        if region then
-            covered[region] = true
-        end
+        GielinorBody.cover(covered, itemVisuals:get(i):getItemType())
     end
     GielinorBody.layBody(visual, look, covered)
     zombie:resetModelNextFrame()

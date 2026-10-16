@@ -59,12 +59,20 @@ final class TileDefinitions {
         return defs;
     }
 
-    /** Tiles of a sheet whose `FloorMaterial` is `material`, in the sheet's order. */
+    /**
+     * The whole-square tiles of a sheet whose `FloorMaterial` is `material`.
+     * Blend sheets come in groups of 16 tiles a material: the first and the
+     * sixth to eighth fill a square (the vanilla maps lay plain ground with
+     * just these), the rest are edges for blending into a neighbour.
+     */
     List<String> floors(String sheet, String material) {
         List<String> out = new ArrayList<>();
         tiles.forEach((name, props) -> {
             if (name.startsWith(sheet + "_") && material.equals(props.get("FloorMaterial"))) {
-                out.add(name);
+                int place = Integer.parseInt(name.substring(sheet.length() + 1)) % 16;
+                if (place == 0 || place >= 5 && place <= 7) {
+                    out.add(name);
+                }
             }
         });
         return out;

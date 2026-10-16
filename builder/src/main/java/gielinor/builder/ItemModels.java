@@ -231,7 +231,7 @@ final class ItemModels {
         Path meshDir = media.resolve("models_X/Skinned/Clothes/Gielinor");
         Files.createDirectories(meshDir);
         part.writeSkinnedX(meshDir.resolve(name + ".X"), name, palette.name() + "_0.png",
-            (face, corner) -> palette.uv(parts[face], part.colours.get(face), face), skeleton, bounds);
+            (face, corner) -> palette.uv(parts[face], part.colours.get(face), face, corner), skeleton, bounds);
         java.util.List<String> textures = new java.util.ArrayList<>();
         for (int i = 0; i < choices; i++) {
             textures.add(palette.name() + "_" + i);

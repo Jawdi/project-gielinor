@@ -152,3 +152,37 @@ local function applyRules()
 end
 
 Events.OnPostDistributionMerge.Add(applyRules)
+
+-- Every zombie drops something of Gielinor's, as the game's monsters always
+-- drop something: vanilla zombies' loot is mostly the clothes they wear, and
+-- Gielinor's zombies wear none (their looks are part of their bodies). One
+-- item, picked the same way as the rest of the loot: the cheaper, the
+-- likelier.
+local drops = nil
+
+local function pickDrop()
+    if not drops then
+        drops = {total = 0, items = {}}
+        for _, entry in ipairs(GielinorLoot) do
+            local weight = rarity(entry[3])
+            drops.total = drops.total + weight
+            table.insert(drops.items, {"Gielinor." .. entry[1], drops.total})
+        end
+    end
+    local roll = ZombRandFloat(0, drops.total)
+    for _, item in ipairs(drops.items) do
+        if roll < item[2] then
+            return item[1]
+        end
+    end
+    return drops.items[#drops.items][1]
+end
+
+local function onZombieDead(zombie)
+    if not GielinorLoot or not GielinorLootSettings.gielinorItems or #GielinorLoot == 0 then
+        return
+    end
+    zombie:getInventory():AddItem(pickDrop())
+end
+
+Events.OnZombieDead.Add(onZombieDead)

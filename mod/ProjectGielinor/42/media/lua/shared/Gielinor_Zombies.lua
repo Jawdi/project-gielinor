@@ -145,8 +145,17 @@ local function onZombieUpdate(zombie)
     end
     if not GielinorBody.bodyOf(zombie:getHumanVisual()) then
         makeGielinor(zombie)
-    elseif ZombRand(STRIP_EVERY) == 0 and stripZomboid(zombie) then
-        zombie:resetModelNextFrame()
+    elseif ZombRand(STRIP_EVERY) == 0 then
+        -- Wounds and underwear come off; clothes torn open show the body.
+        local changed = stripZomboid(zombie)
+        local worn = {}
+        local itemVisuals = zombie:getItemVisuals()
+        for i = 0, itemVisuals:size() - 1 do
+            table.insert(worn, {itemVisuals:get(i):getItemType(), itemVisuals:get(i)})
+        end
+        if GielinorBody.fitClothes(zombie:getHumanVisual(), worn) or changed then
+            zombie:resetModelNextFrame()
+        end
     end
 end
 

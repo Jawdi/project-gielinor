@@ -11,6 +11,8 @@ local kit = {
     "Gielinor.Tinderbox",
     "Gielinor.Lobster",
     "Gielinor.JugOfWine",
+    -- For now, to compare how a Gielinor weapon sits in the hand with one of Zomboid's.
+    "Base.HandAxe",
 }
 
 local function giveKit(player)

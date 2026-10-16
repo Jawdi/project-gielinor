@@ -205,7 +205,9 @@ end
 
 --- Shows or hides a Gielinor body's regions to suit what it wears, and
 --- gives the Gielinor clothes it wears its skin. `worn` lists what it wears
---- as { item type, item visual }. Returns whether anything changed.
+--- as { item type, item visual }. Clothes with holes in don't hide the body,
+--- which shows through the holes as Zomboid's does. Returns whether anything
+--- changed.
 function GielinorBody.fitClothes(visual, worn)
     local type, skin = GielinorBody.bodyOf(visual)
     if not type then
@@ -216,7 +218,9 @@ function GielinorBody.fitClothes(visual, worn)
     local covered = {}
     for _, w in ipairs(worn) do
         if GielinorBody.clothingKind(w[1]) then
-            GielinorBody.cover(covered, w[1])
+            if w[2]:getHolesNumber() == 0 then
+                GielinorBody.cover(covered, w[1])
+            end
             local choice = w[2]:getTextureChoice()
             local fitted = math.floor(math.max(choice, 0) / GielinorKits.skins) * GielinorKits.skins + skin
             if choice ~= fitted then
@@ -245,7 +249,7 @@ function GielinorBody.fitClothes(visual, worn)
     return changed
 end
 
---- What a character wears, as fitClothes takes it.
+--- What a character or corpse wears, as fitClothes takes it.
 function GielinorBody.wornBy(character)
     local out = {}
     local worn = character:getWornItems()

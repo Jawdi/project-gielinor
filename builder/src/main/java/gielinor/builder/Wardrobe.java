@@ -83,8 +83,9 @@ final class Wardrobe {
      * A region of the body, which the clothes covering it hide (as Zomboid's
      * clothing masks its body): its name, and for each body type the designer
      * kits and the game's model pieces it's made of. No designer kit is a bare
-     * torso (they're all shirts), so those are shirtless creatures': body type
-     * A's a shirtless man's (NPC 9658), body type B's a barbarian woman's (NPC
+     * torso (they're all shirts), so those are undressed creatures': body type
+     * A has the Gamer's (NPC 1019) bare torso, the game's own undressed man;
+     * body type B has a barbarian woman's (NPC
      * 3072) torso and bare arms, her fur top a chest covering. (Her fur shorts
      * join her legs to her hips in faces that stretch as she walks, so the
      * legs are a designer kit's, with briefs.)
@@ -161,10 +162,11 @@ final class Wardrobe {
             for (Region region : REGIONS) {
                 String name = "GielinorBody" + capital(region.name()) + "_" + t;
                 boolean legsRegion = region.name().equals("legs");
-                double[] cuts = legsRegion ? new double[]{UNDERWEAR_FROM, UNDERWEAR_TO} : new double[0];
+                boolean cutBriefs = legsRegion;
+                double[] cuts = cutBriefs ? new double[]{UNDERWEAR_FROM, UNDERWEAR_TO} : new double[0];
                 if (models.exportWardrobe(name, region.kits()[type], region.pieces()[type], crown, BODY_IN, skin, SKIN.offered,
                         (source, rgb, height, across) -> {
-                            if (legsRegion && height >= UNDERWEAR_FROM && height < UNDERWEAR_TO && across < UNDERWEAR_ACROSS) {
+                            if (cutBriefs && height >= UNDERWEAR_FROM && height < UNDERWEAR_TO && across < UNDERWEAR_ACROSS) {
                                 return underwear;
                             }
                             return FUR.contains(source) ? SharedPalette.fixed(rgb) : SharedPalette.shade(0);

@@ -330,14 +330,33 @@ function GielinorBody.randomLook(female, random)
     return look
 end
 
--- Characters' bodies follow their clothes as they change.
+-- Characters' bodies follow their clothes as they change. Zomboid tells of
+-- a change as it begins, before the worn items have changed, so the body is
+-- fitted on the character's next update instead, and checked now and then
+-- besides in case a change slips by.
+local CHECK_EVERY = 60
+local due = {}
+
 local function onClothingUpdated(character)
-    if not instanceof(character, "IsoPlayer") or not GielinorBody.available() then
+    if instanceof(character, "IsoPlayer") then
+        due[character] = 2
+    end
+end
+
+local function onPlayerUpdate(player)
+    if not GielinorBody.available() then
         return
     end
-    if GielinorBody.fitClothes(character:getHumanVisual(), GielinorBody.wornBy(character)) then
-        character:resetModelNextFrame()
+    local count = due[player]
+    if count then
+        due[player] = count > 1 and count - 1 or nil
+    elseif ZombRand(CHECK_EVERY) ~= 0 then
+        return
+    end
+    if GielinorBody.fitClothes(player:getHumanVisual(), GielinorBody.wornBy(player)) then
+        player:resetModelNextFrame()
     end
 end
 
 Events.OnClothingUpdated.Add(onClothingUpdated)
+Events.OnPlayerUpdate.Add(onPlayerUpdate)

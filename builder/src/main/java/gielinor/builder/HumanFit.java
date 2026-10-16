@@ -123,10 +123,73 @@ final class HumanFit {
                 // Back from the model's pose into the bind pose.
                 p = turn(p, transpose(turns.get(limb)), joint(limb));
             }
-            out[i] = new Bound(p, new String[]{bone}, new double[]{1});
+            out[i] = blendAtJoints(p, bone);
             mesh.vertices.set(i, p);
         }
         return out;
+    }
+
+    /**
+     * Each bone's parent, for the joints between them: where the two share
+     * the vertices about the joint, as Zomboid's own meshes are weighted, so
+     * the model bends there rather than parting.
+     */
+    private static final Map<String, String> PARENTS = Map.ofEntries(
+        Map.entry("Bip01_Spine", "Bip01_Pelvis"),
+        Map.entry("Bip01_Spine1", "Bip01_Spine"),
+        Map.entry("Bip01_Neck", "Bip01_Spine1"),
+        Map.entry("Bip01_Head", "Bip01_Neck"),
+        Map.entry("Bip01_L_UpperArm", "Bip01_Spine1"),
+        Map.entry("Bip01_R_UpperArm", "Bip01_Spine1"),
+        Map.entry("Bip01_L_Forearm", "Bip01_L_UpperArm"),
+        Map.entry("Bip01_R_Forearm", "Bip01_R_UpperArm"),
+        Map.entry("Bip01_L_Hand", "Bip01_L_Forearm"),
+        Map.entry("Bip01_R_Hand", "Bip01_R_Forearm"),
+        Map.entry("Bip01_L_Thigh", "Bip01_Pelvis"),
+        Map.entry("Bip01_R_Thigh", "Bip01_Pelvis"),
+        Map.entry("Bip01_L_Calf", "Bip01_L_Thigh"),
+        Map.entry("Bip01_R_Calf", "Bip01_R_Thigh"),
+        Map.entry("Bip01_L_Foot", "Bip01_L_Calf"),
+        Map.entry("Bip01_R_Foot", "Bip01_R_Calf"));
+    /** How far from a joint (in metres) its two bones share a vertex: half each at the joint, none at this distance. */
+    private static final double JOINT_REACH = 0.04;
+
+    /**
+     * A vertex at `p` on `bone`, shared with the bone across any joint
+     * within {@link #JOINT_REACH}: the joint where `bone` meets its parent,
+     * and those where its children meet it.
+     */
+    private Bound blendAtJoints(double[] p, String bone) {
+        List<String> bones = new ArrayList<>();
+        List<Double> weights = new ArrayList<>();
+        double others = 0;
+        for (Map.Entry<String, String> joint : PARENTS.entrySet()) {
+            String child = joint.getKey();
+            String parent = joint.getValue();
+            String other = child.equals(bone) ? parent : parent.equals(bone) ? child : null;
+            if (other == null) {
+                continue;
+            }
+            double[] at = skeleton.bind(child);
+            double[] d = ModelExporter.sub(p, at);
+            double distance = Math.sqrt(ModelExporter.dot(d, d));
+            if (distance < JOINT_REACH) {
+                double w = 0.5 * (1 - distance / JOINT_REACH);
+                bones.add(other);
+                weights.add(w);
+                others += w;
+            }
+        }
+        if (others > 0.5) {
+            // Near several joints at once: keep at least half on its own bone.
+            for (int i = 0; i < weights.size(); i++) {
+                weights.set(i, weights.get(i) * 0.5 / others);
+            }
+            others = 0.5;
+        }
+        bones.add(0, bone);
+        weights.add(0, 1 - others);
+        return new Bound(p, bones.toArray(new String[0]), weights.stream().mapToDouble(Double::doubleValue).toArray());
     }
 
     /**

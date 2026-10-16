@@ -1,55 +1,94 @@
--- Puts Gielinor's zombies, and some of its monsters, among Zomboid's. The
--- content pack turns each of the game's zombie looks into an outfit named
--- GielinorZombie_<id>, and humanoid monsters (goblins, skeletons, guards...)
--- into GielinorMob_<id>, and lists them in GielinorOutfits; this adds them to
--- the default zombie mix, weighted so most ordinary zombies are Gielinor ones.
+-- Every zombie is one of Gielinor's. The content pack turns each of the
+-- game's zombie looks into an outfit named GielinorZombie_<id>, and humanoid
+-- monsters (goblins, skeletons, guards...) into GielinorMob_<id>, and lists
+-- them in GielinorOutfits.
 --
--- It runs as the file loads, before Zomboid reads the zombie tables (which it
--- does once, the first time a zombie needs dressing).
+-- Zombies come from three places, and each is covered:
+-- * Most are picked from the zone tables, which Zomboid reads once, the
+--   first time a zombie needs dressing. As this file loads, the default mix
+--   becomes Gielinor's alone, and the special places (police stations, shops,
+--   weddings and so on) lose their own outfits, so they draw from it too.
+-- * Some are dressed directly in a named outfit (a police car's crew, say).
+--   Those are dressed again as they're made.
+-- * Zomboid gives every zombie random underwear, cut for its own body, which
+--   would show through Gielinor's slimmer figures; it's taken off.
 
 require "NPCs/ZombiesZoneDefinition"
 require "Gielinor_Outfits"
 
--- Shares of the default mix, against the vanilla outfits' weights (about 110
--- in all): zombies make roughly three in four, monsters about one in ten.
-local GIELINOR_WEIGHT = 400
-local MONSTER_WEIGHT = 60
+-- Shares of the mix: zombies roughly seven in eight, monsters the rest.
+local ZOMBIE_WEIGHT = 7
+local MONSTER_WEIGHT = 1
 
--- Places with zombies of their own (police stations, shops, rich streets and
--- so on) draw from their own lists first and from the default mix only for
--- the share their outfits leave over. Their outfits keep this much of their
--- share, so most of their zombies come from the default mix as well.
-local ZONE_SHARE = 0.25
+local function haveOutfits()
+    return GielinorOutfits ~= nil and #GielinorOutfits.zombies > 0
+end
 
---- Shrinks every zone's share of its own outfits, all but the ones a zone
---- must always have.
-local function shrinkZones()
-    -- Some zones go by several names; shrink each once.
-    local done = {[ZombiesZoneDefinition.Default] = true}
-    for _, zone in pairs(ZombiesZoneDefinition) do
-        if type(zone) == "table" and not done[zone] then
-            done[zone] = true
-            for _, outfit in pairs(zone) do
-                if type(outfit) == "table" and outfit.chance and not outfit.mandatory then
-                    outfit.chance = outfit.chance * ZONE_SHARE
+--- Leaves the default mix to Gielinor's outfits alone.
+local function replaceDefaultMix()
+    local mix = {}
+    for _, name in ipairs(GielinorOutfits.zombies) do
+        table.insert(mix, {name = name, chance = ZOMBIE_WEIGHT / #GielinorOutfits.zombies})
+    end
+    for _, name in ipairs(GielinorOutfits.monsters) do
+        table.insert(mix, {name = name, chance = MONSTER_WEIGHT / #GielinorOutfits.monsters})
+    end
+    ZombiesZoneDefinition.Default = mix
+end
+
+--- Empties every special place's own outfits, the ones it must always have
+--- included, so its zombies come from the default mix.
+local function emptyZones()
+    for name, zone in pairs(ZombiesZoneDefinition) do
+        if name ~= "Default" and type(zone) == "table" then
+            for key, outfit in pairs(zone) do
+                if type(outfit) == "table" and outfit.name then
+                    zone[key] = nil
                 end
             end
         end
     end
 end
 
---- Adds outfits to the default mix, sharing `weight` between them.
-local function addToMix(names, weight)
-    for _, name in ipairs(names) do
-        table.insert(ZombiesZoneDefinition.Default, {name = name, chance = weight / #names})
+local function isGielinor(name)
+    return name ~= nil and luautils.stringStarts(name, "Gielinor")
+end
+
+--- A random Gielinor outfit, zombies and monsters in the mix's shares.
+local function randomOutfit()
+    local list = GielinorOutfits.zombies
+    if #GielinorOutfits.monsters > 0 and ZombRand(ZOMBIE_WEIGHT + MONSTER_WEIGHT) < MONSTER_WEIGHT then
+        list = GielinorOutfits.monsters
+    end
+    return list[ZombRand(#list) + 1]
+end
+
+--- Takes off everything a zombie wears that isn't part of its Gielinor look.
+local function stripOthers(zombie)
+    local visuals = zombie:getItemVisuals()
+    for i = visuals:size() - 1, 0, -1 do
+        if not isGielinor(visuals:get(i):getClothingItemName()) then
+            visuals:remove(i)
+        end
     end
 end
 
-if not GielinorOutfits or #GielinorOutfits.zombies == 0 then
-    print("Project Gielinor: no zombie outfits found. Build the content pack with the Project Gielinor Content Builder.")
+local function onZombieCreate(zombie)
+    if isClient() or zombie:isSkeleton() then
+        return
+    end
+    if not isGielinor(zombie:getOutfitName()) then
+        zombie:dressInPersistentOutfit(randomOutfit())
+    end
+    stripOthers(zombie)
+    zombie:resetModelNextFrame()
+end
+
+if haveOutfits() then
+    replaceDefaultMix()
+    emptyZones()
+    Events.OnZombieCreate.Add(onZombieCreate)
+    print("Project Gielinor: every zombie is one of " .. #GielinorOutfits.zombies .. " zombie looks and " .. #GielinorOutfits.monsters .. " monster looks")
 else
-    shrinkZones()
-    addToMix(GielinorOutfits.zombies, GIELINOR_WEIGHT)
-    addToMix(GielinorOutfits.monsters, MONSTER_WEIGHT)
-    print("Project Gielinor: " .. #GielinorOutfits.zombies .. " zombie looks and " .. #GielinorOutfits.monsters .. " monster looks added to the default mix")
+    print("Project Gielinor: no zombie outfits found. Build the content pack with the Project Gielinor Content Builder.")
 end

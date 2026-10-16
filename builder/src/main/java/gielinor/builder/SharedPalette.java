@@ -24,6 +24,11 @@ import javax.imageio.ImageIO;
  * pattern of the body part it covers, a shade the player picks in several
  * cells (so blood on it varies from face to face), a fixed colour in one.
  *
+ * Holes are cut through clothes the same way, with a pattern per body part,
+ * which would leave a face missing and the clothes see-through (the body
+ * beneath is hidden, so it can't poke through). So cells also keep out of
+ * their body part's hole pattern: holes count but don't show.
+ *
  * Faces take the chosen shades through {@link #shade}'s stand-in colours,
  * their own colours otherwise.
  */
@@ -53,18 +58,24 @@ final class SharedPalette {
     private final List<int[]> filled = new ArrayList<>();
     private int taken;
 
-    /** A palette laid out over Zomboid's blood masks (`masks`: its media/textures/BloodTextures). */
+    /**
+     * A palette laid out over Zomboid's blood masks (`masks`: its
+     * media/textures/BloodTextures) and clear of its hole masks
+     * (media/textures/HoleTextures beside it).
+     */
     SharedPalette(String name, int shades, Path masks) throws IOException {
+        Path holes = masks.resolveSibling("HoleTextures");
         this.name = name;
         this.shades = shades;
         boolean[][] taken = new boolean[SIZE / CELL][SIZE / CELL];
         free = new HashMap<>();
         for (String part : PARTS) {
             BufferedImage mask = ImageIO.read(masks.resolve("BloodMask" + part + ".png").toFile());
+            BufferedImage hole = ImageIO.read(holes.resolve("BloodMask" + part + ".png").toFile());
             List<int[]> inside = new ArrayList<>();
             for (int cy = 0; cy < SIZE / CELL; cy++) {
                 for (int cx = 0; cx < SIZE / CELL; cx++) {
-                    if (!taken[cx][cy] && solid(mask, cx * CELL, cy * CELL)) {
+                    if (!taken[cx][cy] && solid(mask, cx * CELL, cy * CELL) && clear(hole, cx * CELL, cy * CELL)) {
                         inside.add(new int[]{cx, cy});
                         taken[cx][cy] = true;
                     }
@@ -90,6 +101,18 @@ final class SharedPalette {
                 int alpha = argb >>> 24;
                 int lum = ((argb >> 16 & 0xff) + (argb >> 8 & 0xff) + (argb & 0xff)) / 3;
                 if (alpha < 128 || lum < 128) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Whether no pixel of a cell shows in a mask (fully transparent). */
+    private static boolean clear(BufferedImage mask, int x, int y) {
+        for (int dy = 0; dy < CELL; dy++) {
+            for (int dx = 0; dx < CELL; dx++) {
+                if (mask.getRGB(x + dx, y + dy) >>> 24 != 0) {
                     return false;
                 }
             }

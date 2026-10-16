@@ -123,6 +123,9 @@ final class HumanFit {
                 // Back from the model's pose into the bind pose.
                 p = turn(p, transpose(turns.get(limb)), joint(limb));
             }
+            if (bone.endsWith("_Hand")) {
+                p = reach(p, bone);
+            }
             out[i] = blendAtJoints(p, bone);
             mesh.vertices.set(i, p);
         }
@@ -151,6 +154,31 @@ final class HumanFit {
         Map.entry("Bip01_R_Calf", "Bip01_R_Thigh"),
         Map.entry("Bip01_L_Foot", "Bip01_L_Calf"),
         Map.entry("Bip01_R_Foot", "Bip01_R_Calf"));
+    /**
+     * How much further from the wrist (in metres) the game's hands are moved:
+     * Zomboid's hand reaches about 7 cm past the wrist at its middle, where
+     * it holds what's in it, and the game's about 2 to 4 cm, so held items
+     * hung below the game's fists. The wrist stretches to meet it.
+     */
+    private static final double HAND_REACH = 0.045;
+
+    /** How far past the wrist a hand vertex is moved the whole {@link #HAND_REACH}; nearer, it's moved less. */
+    private static final double HAND_FULL_REACH = 0.03;
+
+    /**
+     * A hand vertex moved further along its hand, away from the wrist: the
+     * whole {@link #HAND_REACH} from {@link #HAND_FULL_REACH} out, less
+     * nearer, none at the wrist, so the wrist stretches rather than parts.
+     */
+    private double[] reach(double[] p, String hand) {
+        String side = hand.contains("_L_") ? "L" : "R";
+        double[] wrist = skeleton.bind("Bip01_" + side + "_Hand");
+        double[] along = unit(ModelExporter.sub(wrist, skeleton.bind("Bip01_" + side + "_Forearm")));
+        double past = ModelExporter.dot(ModelExporter.sub(p, wrist), along);
+        double share = Math.max(0, Math.min(1, past / HAND_FULL_REACH));
+        return ModelExporter.add(p, ModelExporter.scale(along, HAND_REACH * share));
+    }
+
     /** How far from a joint (in metres) its two bones share a vertex: half each at the joint, none at this distance. */
     private static final double JOINT_REACH = 0.04;
 

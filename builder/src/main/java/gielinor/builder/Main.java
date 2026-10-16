@@ -37,7 +37,8 @@ public final class Main {
     /** The script module the items go in: `Gielinor.BronzeAxe`. */
     static final String MODULE = "Gielinor";
 
-    private record Built(ItemDefinition item, String type, ItemConverter.Role role, Map<String, String> properties) {
+    private record Built(ItemDefinition item, String type, ItemConverter.Role role, Map<String, String> properties,
+            List<ZomboidItems.Block> components) {
     }
 
     public static void main(String[] args) throws Exception {
@@ -106,7 +107,7 @@ public final class Main {
             ItemConverter.Role role = ItemConverter.roleOf(d);
             Map<String, String> props = ItemConverter.properties(d, type, role, templates);
             if (props != null) {
-                out.add(new Built(d, type, role, props));
+                out.add(new Built(d, type, role, props, ItemConverter.components(d, role, templates)));
             }
         }
         return out;
@@ -313,6 +314,62 @@ public final class Main {
         return out;
     }
 
+    /**
+     * Kinds of plain items, by a whole word in their name (a word ending
+     * `*` matches any word starting so), first match wins: what the mod's
+     * loot rules sort them by.
+     */
+    private static final String[][] PLAIN_KINDS = {
+        {"ore", "ore"}, {"coal", "ore"}, {"bar", "bar"}, {"rune", "rune"}, {"seed", "seed"},
+        {"grimy", "herb"}, {"herb", "herb"}, {"logs", "logs"}, {"bones", "bones"}, {"coins", "coins"},
+        {"arrow*", "ammo"}, {"bolts", "ammo"}, {"dart", "ammo"}, {"bow", "ranged"}, {"crossbow", "ranged"},
+        {"shield", "shield"}, {"potion*", "potion"}, {"uncut", "gem"}, {"sapphire", "gem"}, {"emerald", "gem"},
+        {"ruby", "gem"}, {"diamond", "gem"},
+    };
+
+    /**
+     * The loot list (`lua/shared/Gielinor_Loot.lua`): every tradeable item's
+     * type, kind and value in coins, for the mod to place in Zomboid's loot
+     * tables. Untradeable items are mostly quest and minigame pieces, which
+     * don't belong in a house's cupboards.
+     */
+    private static String lootList(List<Built> kept) {
+        StringBuilder out = new StringBuilder("-- Written by the Project Gielinor Content Builder: tradeable items as\n"
+            + "-- {type, kind, value in coins}, for the mod's loot rules.\n\nGielinorLoot = {\n");
+        int count = 0;
+        for (Built b : kept) {
+            if (!b.item.tradeable) {
+                continue;
+            }
+            out.append("    {\"").append(b.type).append("\", \"").append(kindOf(b)).append("\", ")
+                .append(Math.max(b.item.cost, 1)).append("},\n");
+            count++;
+        }
+        System.out.println("  loot list: " + count + " items");
+        return out.append("}\n").toString();
+    }
+
+    /** An item's kind for the loot rules: its role, a worn item's slot, or a plain item's sort. */
+    private static String kindOf(Built b) {
+        return switch (b.role) {
+            case WEAR -> "wear_" + ItemConverter.Slot.of(b.item.wearPos1).name().toLowerCase();
+            case PLAIN -> {
+                List<String> words = List.of(b.item.name.toLowerCase().split("[^a-z]+"));
+                for (String[] k : PLAIN_KINDS) {
+                    boolean prefix = k[0].endsWith("*");
+                    String word = prefix ? k[0].substring(0, k[0].length() - 1) : k[0];
+                    if (words.stream().anyMatch(w -> prefix ? w.startsWith(word) : w.equals(word))) {
+                        yield k[1];
+                    }
+                }
+                yield "misc";
+            }
+            // Potions are drunk, but kept with medicine, not in the fridge.
+            case DRINK -> b.item.name.toLowerCase().contains("potion") || b.item.name.matches(".*\\(\\d\\)$") ? "potion" : "drink";
+            default -> b.role.name().toLowerCase();
+        };
+    }
+
     /** Writes the pack in Build 42's layout: `42/mod.info`, `42/media`, and a `common` folder. */
     private static void writePack(Path out, List<Built> built, IconRenderer icons, ItemModels itemModels, NpcManager npcs,
             ZomboidItems.Scripts scripts, File zomboid) throws IOException {
@@ -390,7 +447,7 @@ public final class Main {
                     groundCount++;
                 }
             }
-            kept.add(new Built(b.item, type, b.role, props));
+            kept.add(new Built(b.item, type, b.role, props, b.components));
         }
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
@@ -406,6 +463,7 @@ public final class Main {
             Built b = kept.get(i);
             script.append("\n    item ").append(b.type).append("\n    {\n");
             b.properties.forEach((k, v) -> script.append("        ").append(k).append(" = ").append(v).append(",\n"));
+            b.components.forEach(c -> script.append(c.text(8)));
             script.append("    }\n");
             names.append("  \"").append(MODULE).append('.').append(b.type).append("\": \"").append(json(b.item.name)).append('"')
                 .append(i + 1 < kept.size() ? ",\n" : "\n");
@@ -415,6 +473,7 @@ public final class Main {
         names.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_items.txt"), script, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("lua/shared/Translate/EN/ItemName.json"), names, StandardCharsets.UTF_8);
+        Files.writeString(media.resolve("lua/shared/Gielinor_Loot.lua"), lootList(kept), StandardCharsets.UTF_8);
 
         System.out.println("wrote " + kept.size() + " items (" + (built.size() - kept.size()) + " without an icon left out), " + modelCount + " weapon models, " + groundCount + " ground models, " + wornCount + " wearables");
         counts.forEach((role, n) -> System.out.println("  " + role.name().toLowerCase() + ": " + n));

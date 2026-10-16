@@ -1,16 +1,18 @@
 package gielinor.builder;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import net.runelite.cache.definitions.ItemDefinition;
 
 /**
  * Turns a Gielinor item into a Project Zomboid item. Each copies the vanilla
- * Zomboid item that plays the same part (a hand axe for an axe, an apple for
- * food), so it borrows that item's animations, sounds and held model, then
- * takes its own name, icon and weight, with damage scaled from its strength
- * bonus.
+ * Zomboid item that plays the same part (a hand axe for an axe, a hammer for
+ * a hammer, salmon for a fish), so it borrows that item's animations, sounds,
+ * held model and the tags Zomboid's crafting and actions look for, then takes
+ * its own name, icon and weight, with damage scaled from its strength bonus.
  */
 final class ItemConverter {
     private ItemConverter() {
@@ -32,8 +34,12 @@ final class ItemConverter {
         BLUNT("LeadPipe"),
         POLEARM("SpearCrafted"),
         STAFF("BaseballBat"),
-        FOOD("Apple"),
-        DRINK("Apple"),
+        /** A tool Zomboid has too (a hammer, a bucket): its template is chosen by name. */
+        TOOL(null),
+        /** Food: its template is chosen by what it is. */
+        FOOD(null),
+        /** Drink, as a container holding its drink. */
+        DRINK("Wine"),
         /** Worn: clothing or armour. */
         WEAR(null),
         /** Carried, with no use of its own yet. */
@@ -46,9 +52,57 @@ final class ItemConverter {
         }
 
         boolean isWeapon() {
-            return this != FOOD && this != DRINK && this != WEAR && this != PLAIN;
+            return template != null && this != DRINK;
         }
     }
+
+    /**
+     * Gielinor's tools that Zomboid has a counterpart for, by name: each
+     * becomes a copy of Zomboid's, so it works wherever Zomboid's does
+     * (a hammer builds, a needle sews, a bucket carries water).
+     */
+    private static final Map<String, String> TOOLS = Map.ofEntries(
+        Map.entry("hammer", "Hammer"),
+        Map.entry("saw", "Saw"),
+        Map.entry("knife", "KitchenKnife"),
+        Map.entry("needle", "Needle"),
+        Map.entry("shears", "Scissors"),
+        Map.entry("chisel", "MetalworkingChisel"),
+        Map.entry("tinderbox", "MagnesiumFirestarter"),
+        Map.entry("spade", "Shovel"),
+        Map.entry("rake", "Rake"),
+        Map.entry("fishing rod", "FishingRod"),
+        Map.entry("fly fishing rod", "FishingRod"),
+        Map.entry("rope", "Rope"),
+        Map.entry("bucket", "BucketEmpty"),
+        Map.entry("bucket of water", "BucketEmpty"),
+        Map.entry("bucket of milk", "BucketEmpty"),
+        Map.entry("pot", "Pot"),
+        Map.entry("bowl", "Bowl"),
+        Map.entry("bowl of water", "Bowl"),
+        Map.entry("jug", "WaterBottle"),
+        Map.entry("jug of water", "WaterBottle"),
+        Map.entry("vial", "WaterBottle"),
+        Map.entry("vial of water", "WaterBottle"),
+        Map.entry("empty cup", "Teacup"));
+
+    /**
+     * The liquid an item holds, by a word in its name, first match wins
+     * (Zomboid's fluid names). Items whose name names no liquid hold water.
+     */
+    private static final String[][] FLUIDS = {
+        {"wine", "Wine"}, {"mead", "Mead"}, {"cider", "Cider"}, {"beer", "Beer"}, {"ale", "Beer"},
+        {"bitter", "Beer"}, {"stout", "Beer"}, {"brandy", "Brandy"}, {"vodka", "Vodka"}, {"whisky", "Whiskey"},
+        {"gin", "Gin"}, {"rum", "Rum"}, {"tea", "Tea"}, {"coffee", "Coffee"}, {"milk", "CowMilk"},
+        {"juice", "JuiceApple"}, {"water", "Water"},
+    };
+
+    /** Words naming fish and meat, which cook like Zomboid's. */
+    private static final String[] FISH = {"shrimp", "anchov", "sardine", "herring", "trout", "salmon", "pike", "tuna",
+        "lobster", "swordfish", "monkfish", "shark", "karambwan", "manta", "turtle", "bass", "cod", "mackerel",
+        "anglerfish", "eel", "crab", "fish"};
+    private static final String[] MEAT = {"meat", "beef", "chicken", "rabbit", "bear", "rat"};
+    private static final String[] BAKED = {"bread", "cake", "pie", "pizza", "stew", "potato"};
 
     /**
      * Where a worn item goes on a Zomboid character, by the game's equipment
@@ -91,7 +145,9 @@ final class ItemConverter {
      * 35 axes, 67 pickaxes, 21 slashing swords, 25 daggers and stabbing
      * swords, 61 two-handed swords, 39 maces, 26 warhammers, 92 mjolnirs,
      * 36 spears, 66 and 273 halberds, 1588 partisans, 1193 scythes, 1 staves,
-     * 42 banners, 150 whips, 65 claws) and, failing that, its first option.
+     * 42 banners, 150 whips, 65 claws), its name for tools Zomboid has too,
+     * and failing those its first option (raw food, which can't be eaten
+ * until it's cooked, counts as food).
      * Bows, crossbows and thrown weapons stay plain until there's ranged combat.
      */
     static Role roleOf(ItemDefinition item) {
@@ -108,8 +164,11 @@ final class ItemConverter {
                 default: break;
             }
         }
+        if (TOOLS.containsKey(item.name.toLowerCase())) {
+            return Role.TOOL;
+        }
         String first = item.interfaceOptions == null ? null : item.interfaceOptions[0];
-        if ("Eat".equalsIgnoreCase(first)) {
+        if ("Eat".equalsIgnoreCase(first) || isRaw(item) && item.wearPos1 < 0) {
             return Role.FOOD;
         }
         if ("Drink".equalsIgnoreCase(first)) {
@@ -119,6 +178,22 @@ final class ItemConverter {
             return Role.WEAR;
         }
         return Role.PLAIN;
+    }
+
+    /** The vanilla item an item copies, or null for none. */
+    static String templateOf(ItemDefinition item, Role role) {
+        String name = item.name.toLowerCase();
+        return switch (role) {
+            case TOOL -> TOOLS.get(name);
+            case FOOD -> containsAny(name, FISH) ? "Salmon" : containsAny(name, MEAT) ? "Steak"
+                : containsAny(name, BAKED) ? "Bread" : "Apple";
+            default -> role.template;
+        };
+    }
+
+    /** Whether an item comes raw, needing cooking before it's safe to eat. */
+    static boolean isRaw(ItemDefinition item) {
+        return item.name.toLowerCase().startsWith("raw ");
     }
 
     /** Item params holding defence against stab, slash and crush attacks. */
@@ -144,7 +219,10 @@ final class ItemConverter {
     /** Properties never copied from a template: its own looks, name and crafting ties. */
     private static final Set<String> NOT_COPIED = Set.of(
         "icon", "iconsfortexture", "weight", "displayname", "onbreak", "researchablerecipes",
-        "evolvedrecipe", "foodtype", "daysfresh", "daystotallyrotten", "tooltip", "weaponspritesbyindex");
+        "evolvedrecipe", "foodtype", "daysfresh", "daystotallyrotten", "tooltip", "weaponspritesbyindex",
+        "iconcolormask", "iconfluidmask");
+    /** What makes food raw: left off food that comes cooked. */
+    private static final Set<String> COOKING = Set.of("iscookable", "dangerousuncooked", "minutestocook", "minutestoburn");
 
     /** The vanilla model a template weapon is drawn with. */
     static String templateModel(ZomboidItems.Block template) {
@@ -204,13 +282,16 @@ final class ItemConverter {
     /** The item's script properties, or null if its template is missing. */
     static Map<String, String> properties(ItemDefinition item, String type, Role role, Map<String, ZomboidItems.Block> templates) {
         Map<String, String> props = new LinkedHashMap<>();
-        if (role.template != null) {
-            ZomboidItems.Block template = templates.get(role.template);
+        String templateName = templateOf(item, role);
+        if (templateName != null) {
+            ZomboidItems.Block template = templates.get(templateName);
             if (template == null) {
                 return null;
             }
+            boolean raw = isRaw(item);
             template.properties().forEach((k, v) -> {
-                if (!NOT_COPIED.contains(k.toLowerCase())) {
+                String key = k.toLowerCase();
+                if (!NOT_COPIED.contains(key) && (raw || role != Role.FOOD || !COOKING.contains(key))) {
                     props.put(k, v);
                 }
             });
@@ -238,28 +319,73 @@ final class ItemConverter {
         props.put("Weight", number(Math.max(item.weight / 1000.0, 0.01)));
         props.put("Icon", "Gielinor_" + type);
         int strength = meleeStrength(item);
-        switch (role) {
-            case FOOD -> {
-                props.put("HungerChange", "-15.0");
-                props.put("ThirstChange", "0.0");
-                props.put("Calories", "150.0");
+        if (role == Role.FOOD) {
+            props.put("HungerChange", "-15.0");
+            props.put("Calories", "150.0");
+            if (isRaw(item)) {
+                props.put("IsCookable", "true");
+                props.put("DangerousUncooked", "true");
+                props.putIfAbsent("MinutesToCook", "20");
+                props.putIfAbsent("MinutesToBurn", "60");
             }
-            case DRINK -> {
-                props.put("HungerChange", "0.0");
-                props.put("ThirstChange", "-20.0");
-                props.put("Calories", "40.0");
-            }
-            default -> {
-                if (role.isWeapon()) {
-                    double max = maxDamage(strength);
-                    props.put("MinDamage", number(max * 0.45));
-                    props.put("MaxDamage", number(max));
-                    if (role == Role.AXE) {
-                        props.put("TreeDamage", Integer.toString(treeDamage(strength)));
-                    }
-                }
+        } else if (role.isWeapon()) {
+            double max = maxDamage(strength);
+            props.put("MinDamage", number(max * 0.45));
+            props.put("MaxDamage", number(max));
+            if (role == Role.AXE) {
+                props.put("TreeDamage", Integer.toString(treeDamage(strength)));
             }
         }
         return props;
+    }
+
+    /**
+     * The item's components: the template's, with a container's liquid set
+     * by the item's name (a jug of wine holds wine, an empty jug nothing).
+     */
+    static List<ZomboidItems.Block> components(ItemDefinition item, Role role, Map<String, ZomboidItems.Block> templates) {
+        String templateName = templateOf(item, role);
+        ZomboidItems.Block template = templateName == null ? null : templates.get(templateName);
+        List<ZomboidItems.Block> out = new ArrayList<>();
+        if (template == null) {
+            return out;
+        }
+        for (ZomboidItems.Block child : template.children()) {
+            if (!child.header().equals("component FluidContainer")) {
+                out.add(child);
+                continue;
+            }
+            Map<String, String> props = new LinkedHashMap<>(child.properties());
+            props.remove("PickRandomFluid");
+            String fluid = fluidOf(item);
+            List<ZomboidItems.Block> fluids = fluid == null ? List.of()
+                : List.of(new ZomboidItems.Block("Fluids", Map.of("fluid", fluid + ":1.0"), List.of()));
+            out.add(new ZomboidItems.Block(child.header(), props, fluids));
+        }
+        return out;
+    }
+
+    /** The liquid a container comes holding, or null if it comes empty. */
+    private static String fluidOf(ItemDefinition item) {
+        String name = item.name.toLowerCase();
+        boolean empty = TOOLS.containsKey(name) && !name.contains(" of ") && !name.equals("empty cup");
+        if (empty || name.equals("empty cup")) {
+            return null;
+        }
+        for (String[] f : FLUIDS) {
+            if (name.matches(".*\\b" + f[0] + ".*")) {
+                return f[1];
+            }
+        }
+        return "Water";
+    }
+
+    private static boolean containsAny(String name, String[] words) {
+        for (String w : words) {
+            if (name.contains(w)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

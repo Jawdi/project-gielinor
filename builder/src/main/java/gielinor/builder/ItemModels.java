@@ -301,6 +301,11 @@ final class ItemModels {
         xml.append("\t<m_AltMaleModel></m_AltMaleModel>\r\n\t<m_AltFemaleModel></m_AltFemaleModel>\r\n");
         xml.append("\t<m_Static>false</m_Static>\r\n\t<m_AllowRandomHue>false</m_AllowRandomHue>\r\n");
         xml.append("\t<m_AllowRandomTint>false</m_AllowRandomTint>\r\n\t<m_AttachBone></m_AttachBone>\r\n");
+        // Zomboid cuts clothing worn under other clothing with mask images
+        // laid out like its own body texture; a palette texture isn't, so
+        // the cuts would fall in random places. "none" leaves it whole, as
+        // Zomboid does for bags.
+        xml.append("\t<m_MasksFolder>none</m_MasksFolder>\r\n");
         if (hatCategory != null) {
             xml.append("\t<m_HatCategory>").append(hatCategory).append("</m_HatCategory>\r\n");
         }

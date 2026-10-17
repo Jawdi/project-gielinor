@@ -191,6 +191,65 @@ final class Skeleton {
     record Spot(int[] face, double[] weights) {
     }
 
+    /** Each body vertex's island: the piece of the body's texture it's on, found when first wanted. */
+    private int[] islands;
+
+    /**
+     * The island of the body's texture a body triangle is on. The body's
+     * vertices are split where its texture is (each has one place on it), so
+     * triangles sharing a vertex are on one island.
+     */
+    int island(int[] face) {
+        if (islands == null) {
+            int[] parent = new int[bodyVertices.size()];
+            for (int i = 0; i < parent.length; i++) {
+                parent[i] = i;
+            }
+            for (int[] f : bodyFaces) {
+                union(parent, f[0], f[1]);
+                union(parent, f[1], f[2]);
+            }
+            islands = new int[parent.length];
+            for (int i = 0; i < parent.length; i++) {
+                islands[i] = root(parent, i);
+            }
+        }
+        return islands[face[0]];
+    }
+
+    private static int root(int[] parent, int i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    }
+
+    private static void union(int[] parent, int a, int b) {
+        parent[root(parent, a)] = root(parent, b);
+    }
+
+    /** The point nearest `p` on one island of the body's texture (see {@link #island}). */
+    Spot nearestSpot(double[] p, int island) {
+        int[] nearest = null;
+        double[] at = {1, 0, 0};
+        double best = Double.MAX_VALUE;
+        for (int[] f : bodyFaces) {
+            if (island(f) != island) {
+                continue;
+            }
+            double[] w = closestWeights(p, f);
+            double[] d = ModelExporter.sub(p, bodyPoint(f, w));
+            double distance = ModelExporter.dot(d, d);
+            if (distance < best) {
+                best = distance;
+                nearest = f;
+                at = w;
+            }
+        }
+        return new Spot(nearest, at);
+    }
+
     /** The point nearest `p` on the skin of a part of the body. */
     Spot nearestSpot(double[] p, BodyPart part) {
         int[] nearest = null;

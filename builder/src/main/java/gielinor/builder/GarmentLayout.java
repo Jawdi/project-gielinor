@@ -3,9 +3,7 @@ package gielinor.builder;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.List;
 import javax.imageio.ImageIO;
 
 /**
@@ -16,19 +14,23 @@ import javax.imageio.ImageIO;
  *
  * Each corner of the garment takes the texture coordinates of the point on
  * Zomboid's body straight out from it (from the bone it lies along), so
- * faces sharing a corner share it in the texture and
- * the masks run on across them. A face whose corners land on separate pieces
- * of the body's texture (across a seam) would stretch over the texture
- * between; it's laid onto the one body triangle nearest it instead.
+ * faces sharing a corner share it in the texture and the masks run on across
+ * them. A face whose corners land on separate islands of the body's texture
+ * (across a seam: a shoulder's corners on the arm's and the torso's) would
+ * stretch over the gap between them, where no mask reaches, and so never
+ * take blood or dirt. Its corners all go onto the island under its middle
+ * instead, each to the nearest point of it.
  *
- * The texture is then painted: each face's triangle in its colour, larger
- * faces first so small details (a belt, a button) show over them.
+ * The texture is then painted: each face's triangle in its colour, the
+ * faces underneath first (a sole is seldom seen, and shares the foot's place
+ * on the texture with the boot's sides), then larger faces before smaller,
+ * so small details (a belt, a button) show over them.
  */
 final class GarmentLayout {
     /** The texture's size, as Zomboid's body texture and its masks are. */
     static final int SIZE = 256;
-    /** A face stretched over the texture more than this, compared with its size, crosses a seam. */
-    private static final double SEAM_STRETCH = 4;
+    /** A face whose normal points down more steeply than this (its y part, from -1 to 1) faces the ground. */
+    private static final double UNDERSIDE = 0.7;
 
     private final Skeleton body;
     private final Mesh mesh;
@@ -39,21 +41,32 @@ final class GarmentLayout {
         this.body = body;
         this.mesh = mesh;
         int n = mesh.faces.size();
-        double[][] vertexUv = new double[mesh.vertices.size()][];
+        Skeleton.Spot[] spots = new Skeleton.Spot[mesh.vertices.size()];
         for (int[] face : mesh.faces) {
             for (int v : face) {
-                if (vertexUv[v] == null) {
-                    vertexUv[v] = surfaceUv(mesh.vertices.get(v), BodyPart.of(bounds[v].bone()));
+                if (spots[v] == null) {
+                    spots[v] = body.spotOutFrom(mesh.vertices.get(v), BodyPart.of(bounds[v].bone()));
                 }
             }
         }
-        double scale = typicalScale();
         uvs = new double[n][][];
         for (int f = 0; f < n; f++) {
             int[] face = mesh.faces.get(f);
-            double[][] corners = {vertexUv[face[0]], vertexUv[face[1]], vertexUv[face[2]]};
-            if (longestEdge(corners) > SEAM_STRETCH * scale * longestEdge3d(face) + 4.0 / SIZE) {
-                corners = projected(face, BodyPart.of(bounds[face[0]].bone()));
+            int island = body.island(spots[face[0]].face());
+            boolean one = island == body.island(spots[face[1]].face()) && island == body.island(spots[face[2]].face());
+            double[][] corners = new double[3][];
+            if (!one) {
+                double[] middle = new double[3];
+                for (int v : face) {
+                    for (int k = 0; k < 3; k++) {
+                        middle[k] += mesh.vertices.get(v)[k] / 3;
+                    }
+                }
+                island = body.island(body.spotOutFrom(middle, BodyPart.of(bounds[face[0]].bone())).face());
+            }
+            for (int k = 0; k < 3; k++) {
+                Skeleton.Spot spot = one ? spots[face[k]] : body.nearestSpot(mesh.vertices.get(face[k]), island);
+                corners[k] = uvAt(spot.face(), spot.weights());
             }
             uvs[f] = corners;
         }
@@ -61,75 +74,6 @@ final class GarmentLayout {
 
     double[] uv(int face, int corner) {
         return uvs[face][corner];
-    }
-
-    /** Texture units per metre on Zomboid's body, at its median triangle. */
-    private double typicalScale() {
-        List<Double> ratios = new ArrayList<>();
-        for (int[] f : body.bodyFaces) {
-            double[][] uv = {body.bodyUvs.get(f[0]), body.bodyUvs.get(f[1]), body.bodyUvs.get(f[2])};
-            double geometric = 0;
-            double texture = longestEdge(uv);
-            for (int k = 0; k < 3; k++) {
-                geometric = Math.max(geometric, distance(body.bodyVertices.get(f[k]), body.bodyVertices.get(f[(k + 1) % 3])));
-            }
-            if (geometric > 1e-6) {
-                ratios.add(texture / geometric);
-            }
-        }
-        ratios.sort(Double::compare);
-        return ratios.isEmpty() ? 1 : ratios.get(ratios.size() / 2);
-    }
-
-    private double longestEdge3d(int[] face) {
-        double longest = 0;
-        for (int k = 0; k < 3; k++) {
-            longest = Math.max(longest, distance(mesh.vertices.get(face[k]), mesh.vertices.get(face[(k + 1) % 3])));
-        }
-        return longest;
-    }
-
-    private static double longestEdge(double[][] uv) {
-        double longest = 0;
-        for (int k = 0; k < 3; k++) {
-            double du = uv[k][0] - uv[(k + 1) % 3][0];
-            double dv = uv[k][1] - uv[(k + 1) % 3][1];
-            longest = Math.max(longest, Math.sqrt(du * du + dv * dv));
-        }
-        return longest;
-    }
-
-    /**
-     * The texture coordinates of the point on `part` of Zomboid's body
-     * straight out from its middle through `p` (see
-     * {@link Skeleton#spotOutFrom}). The game's limbs are thinner than
-     * Zomboid's, so a garment sits inside Zomboid's body; the nearest point
-     * on it would crowd a whole trouser leg onto the side of the body's leg
-     * it lies nearest, and blood would fall on it in streaks.
-     */
-    private double[] surfaceUv(double[] p, BodyPart part) {
-        Skeleton.Spot spot = body.spotOutFrom(p, part);
-        return uvAt(spot.face(), spot.weights());
-    }
-
-    /** A face's corners laid onto the triangle of `part`'s skin nearest its middle, by their weights in its plane. */
-    private double[][] projected(int[] face, BodyPart part) {
-        double[] middle = new double[3];
-        for (int v : face) {
-            for (int k = 0; k < 3; k++) {
-                middle[k] += mesh.vertices.get(v)[k] / 3;
-            }
-        }
-        int[] nearest = body.nearestSpot(middle, part).face();
-        double[][] out = new double[3][];
-        for (int k = 0; k < 3; k++) {
-            out[k] = clamp(uvAt(nearest, body.planeWeights(mesh.vertices.get(face[k]), nearest)));
-        }
-        return out;
-    }
-
-    private static double[] clamp(double[] uv) {
-        return new double[]{Math.max(0, Math.min(1, uv[0])), Math.max(0, Math.min(1, uv[1]))};
     }
 
     private double[] uvAt(int[] f, double[] w) {
@@ -141,16 +85,10 @@ final class GarmentLayout {
         return out;
     }
 
-    private static double distance(double[] a, double[] b) {
-        double dx = a[0] - b[0];
-        double dy = a[1] - b[1];
-        double dz = a[2] - b[2];
-        return Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
     /**
      * Paints the garment's texture: every face's triangle in its colour
-     * (`colourOf` a face, as RGB), larger faces first, after a ground of the
+     * (`colourOf` a face, as RGB), undersides first, then larger faces before
+     * smaller, after a ground of the
      * colour covering the most of it so the faces' edges never meet bare
      * texture.
      */
@@ -165,7 +103,13 @@ final class GarmentLayout {
             area[f] = Math.abs((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])) / 2;
             coverByColour.merge(colourOf.applyAsInt(f), area[f], Double::sum);
         }
-        java.util.Arrays.sort(order, Comparator.comparingDouble(f -> -area[f]));
+        // Undersides (a shoe's sole, a hem's bottom) first, so where a garment's
+        // faces share a place on the body's texture the faces seen win it.
+        boolean[] under = new boolean[n];
+        for (int f = 0; f < n; f++) {
+            under[f] = mesh.normal(f)[1] < -UNDERSIDE;
+        }
+        java.util.Arrays.sort(order, Comparator.<Integer>comparingInt(f -> under[f] ? 0 : 1).thenComparingDouble(f -> -area[f]));
         int ground = coverByColour.entrySet().stream().max(java.util.Map.Entry.comparingByValue()).map(java.util.Map.Entry::getKey).orElse(0);
         BufferedImage image = new BufferedImage(SIZE, SIZE, BufferedImage.TYPE_INT_RGB);
         for (int y = 0; y < SIZE; y++) {

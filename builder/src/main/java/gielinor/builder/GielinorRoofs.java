@@ -53,6 +53,8 @@ final class GielinorRoofs {
     private final byte[] level;
     private final byte[] style;
     private final byte[] height;
+    /** Whether the level above each square's roof has a floor there (no flat top over it then). */
+    private final boolean[] floorAbove;
 
     /** The roofs over a cell's squares (`size` a side from `cellX`, `cellY`) and around them. */
     GielinorRoofs(GielinorMap.GroundGrid ground, GielinorObjects.Placed[] levels, int cellX, int cellY, int size) {
@@ -62,8 +64,12 @@ final class GielinorRoofs {
         level = new byte[side * side];
         style = new byte[side * side];
         height = new byte[side * side];
+        floorAbove = new boolean[side * side];
         for (int i = 0; i < side * side; i++) {
             int[] r = roofOver(ground, levels, x0 + i % side, y0 + i / side);
+            if (r != null && r[0] + 1 < GielinorObjects.LEVELS) {
+                floorAbove[i] = (ground.upper(r[0] + 1, x0 + i % side, y0 + i / side) & GielinorMap.GroundGrid.FLOOR) != 0;
+            }
             level[i] = (byte) (r == null ? -1 : r[0]);
             style[i] = (byte) (r == null ? 0 : r[1]);
             height[i] = (byte) (r == null ? 0 : TOP);
@@ -165,8 +171,8 @@ final class GielinorRoofs {
         int base = GROUPS[style[i]];
         int h = height[i];
         if (h >= TOP) {
-            if (on + 1 < stack.size() && stack.get(on + 1).isEmpty()) {
-                stack.get(on + 1).add(sheet + "_" + (base + FLAT));
+            if (on + 1 < stack.size() && !floorAbove[i]) {
+                stack.get(on + 1).add(0, sheet + "_" + (base + FLAT));
             }
             return;
         }
@@ -195,12 +201,12 @@ final class GielinorRoofs {
     }
 
     /**
-     * The roof over a square: its level and style, or null for none. The
-     * game's own roof (its roof objects) on the lowest level above the
-     * square's highest floor that has one, but not where that level has a
-     * floor (which is the roof then) or a stairwell; else, where the game
-     * only marks the highest floor as roofed, a roof over it (slate over
-     * stone, clay tiles over wood).
+     * The roof over a square: its level and style, or null for none. Where
+     * the game has a roof (its roof objects) over the square, one in its
+     * style just above the square's highest floor (or higher, where the
+     * game's is); else, where the game only marks the highest floor as
+     * roofed, one over it (slate over stone, clay tiles over wood). Never
+     * over a stairwell.
      */
     private static int[] roofOver(GielinorMap.GroundGrid ground, GielinorObjects.Placed[] levels, int zx, int zy) {
         GielinorTerrain.Ground g = ground.at(zx, zy);
@@ -220,17 +226,22 @@ final class GielinorRoofs {
                 stone = (u & GielinorMap.GroundGrid.STONE) != 0;
             }
         }
-        for (int z = Math.max(1, top + 1); z < MapCell.LEVELS; z++) {
-            int roof = ground.roofAt(z, zx, zy);
-            boolean floored = z < GielinorObjects.LEVELS
-                && ((ground.upper(z, zx, zy) & GielinorMap.GroundGrid.FLOOR) != 0 || levels[z].isOpen(zx, zy));
-            if (roof >= 0 && !floored) {
-                return new int[]{z, roof};
+        int[] roof = null;
+        for (int z = 1; z < MapCell.LEVELS && roof == null; z++) {
+            int style = ground.roofAt(z, zx, zy);
+            if (style >= 0) {
+                // The game's roofs can rise from the level of a floor under
+                // them (an attic's); Zomboid's stand over the highest floor.
+                roof = new int[]{Math.max(z, Math.max(1, top + 1)), style};
             }
         }
-        if (top >= 0 && roofed && top + 1 < MapCell.LEVELS && (top + 1 >= GielinorObjects.LEVELS || !levels[top + 1].isOpen(zx, zy))) {
-            return new int[]{top + 1, stone ? SLATE : CLAY};
+        if (roof == null && top >= 0 && roofed) {
+            roof = new int[]{top + 1, stone ? SLATE : CLAY};
         }
-        return null;
+        // Never over a stairwell (the stairs come up through it).
+        if (roof != null && (roof[0] >= MapCell.LEVELS || roof[0] < GielinorObjects.LEVELS && levels[roof[0]].isOpen(zx, zy))) {
+            return null;
+        }
+        return roof;
     }
 }

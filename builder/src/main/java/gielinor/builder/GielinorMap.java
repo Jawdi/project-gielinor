@@ -117,6 +117,96 @@ final class GielinorMap {
             }
         }
 
+        /**
+         * Fills the holes in the game's roofs. The game puts its roof
+         * objects only on a roof's edges, their slopes rising to meet over
+         * the middle, which has none; so on each level, the tiles a roof
+         * closes round (not reached from the open without crossing it) are
+         * roofed too, in the roof's style, where most of them are inside a
+         * building below (a courtyard isn't) or there are only a few.
+         * Returns how many tiles were filled.
+         */
+        int fillRoofHoles() {
+            if (roofs == null) {
+                return 0;
+            }
+            int filled = 0;
+            int n = tilesX * tilesY;
+            int[] queue = new int[n];
+            for (int level = 1; level <= 4; level++) {
+                int bit = 1 << level;
+                // The open: tiles reached from the world's edge without crossing this level's roofs.
+                boolean[] open = new boolean[n];
+                int tail = 0;
+                for (int i = 0; i < n; i++) {
+                    int tx = i % tilesX;
+                    int ty = i / tilesX;
+                    boolean edge = tx == 0 || ty == 0 || tx == tilesX - 1 || ty == tilesY - 1;
+                    if (edge && (roofs[i] & bit) == 0) {
+                        open[i] = true;
+                        queue[tail++] = i;
+                    }
+                }
+                for (int head = 0; head < tail; head++) {
+                    int i = queue[head];
+                    for (int next : neighbours(i)) {
+                        if (next >= 0 && !open[next] && (roofs[next] & bit) == 0) {
+                            open[next] = true;
+                            queue[tail++] = next;
+                        }
+                    }
+                }
+                // Each hole: fill it if it's over a building.
+                boolean[] seen = new boolean[n];
+                for (int start = 0; start < n; start++) {
+                    if (open[start] || seen[start] || (roofs[start] & bit) != 0) {
+                        continue;
+                    }
+                    int head = 0;
+                    tail = 0;
+                    queue[tail++] = start;
+                    seen[start] = true;
+                    int inside = 0;
+                    int style = -1;
+                    while (head < tail) {
+                        int i = queue[head++];
+                        // Inside a building below, on any level (a hall can rise through two).
+                        boolean under = false;
+                        for (int below = 0; below < level && !under; below++) {
+                            under = indoorTile(below, i % tilesX, i / tilesX) || below > 0 && below < upper.length
+                                && upper[below] != null && (upper[below][i] & FLOOR) != 0;
+                        }
+                        inside += under ? 1 : 0;
+                        for (int next : neighbours(i)) {
+                            if (next < 0) {
+                                continue;
+                            }
+                            if ((roofs[next] & bit) != 0) {
+                                style = style < 0 ? (roofs[next] & 0xff) >> 5 : style;
+                            } else if (!seen[next]) {
+                                seen[next] = true;
+                                queue[tail++] = next;
+                            }
+                        }
+                    }
+                    if (inside * 2 >= tail || tail <= 4) {
+                        for (int k = 0; k < tail; k++) {
+                            roof(level, queue[k] % tilesX, queue[k] / tilesX, Math.max(style, 0));
+                        }
+                        filled += tail;
+                    }
+                }
+            }
+            return filled;
+        }
+
+        /** The four tiles beside one (by its place in the grid), -1 past the world's edge. */
+        private int[] neighbours(int i) {
+            int tx = i % tilesX;
+            int ty = i / tilesX;
+            return new int[]{tx > 0 ? i - 1 : -1, tx < tilesX - 1 ? i + 1 : -1, ty > 0 ? i - tilesX : -1, ty < tilesY - 1 ? i + tilesX : -1};
+        }
+
         /** The style of the roof on a level over a Zomboid square (see {@link #roof}), or -1 for none. */
         int roofAt(int level, int zx, int zy) {
             if (roofs == null || zx < 0 || zy < 0 || zx >= width || zy >= height) {
@@ -285,6 +375,7 @@ final class GielinorMap {
         int height = ground.height;
         GielinorObjects.Placed[] levels = GielinorObjects.Placed.levels(width, height);
         objects.place(levels, ground, terrain);
+        int roofHoles = ground.fillRoofHoles();
         GielinorObjects.Placed placed = levels[0];
         int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
         int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
@@ -364,7 +455,8 @@ final class GielinorMap {
         writeSpawnPoints(dir, startX, startY);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
         System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts + ", " + gaps + " gaps filled, "
-            + roomCount + " rooms in " + buildingCount + " buildings " + roomNames + ", " + upperFloors + " tiles of upper floors");
+            + roomCount + " rooms in " + buildingCount + " buildings " + roomNames + ", " + upperFloors + " tiles of upper floors, "
+            + roofHoles + " tiles of roofs' middles filled");
     }
 
     /**
@@ -503,15 +595,13 @@ final class GielinorMap {
 
     /** Whether an edge's gap opens (a door or a gate), so isn't a wall to find a way past. */
     private static boolean opens(int gap) {
-        return gap == GielinorObjects.DOOR || gap == GielinorObjects.GATE || gap >= GielinorObjects.DOUBLE_GATE;
+        return gap == GielinorObjects.DOOR || gap == GielinorObjects.GATE;
     }
 
     /** A wall's tiles along one edge: the wall, or its frame and what's in it. */
     private static void edgeTiles(List<String> tiles, GielinorObjects.Style style, int gap, boolean west) {
         boolean building = style.building();
-        if (gap >= GielinorObjects.DOUBLE_GATE) {
-            tiles.add(style.doubleGate(west, gap - GielinorObjects.DOUBLE_GATE + 1));
-        } else if (gap == GielinorObjects.GATE || gap == GielinorObjects.DOOR && !building) {
+        if (gap == GielinorObjects.GATE || gap == GielinorObjects.DOOR && !building) {
             tiles.add(style.gate(west));
         } else if (gap == GielinorObjects.DOOR) {
             tiles.add(style.frame(west, true));

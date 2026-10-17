@@ -112,7 +112,6 @@ final class GielinorObjects {
     private static final int[] TREES = {8, 9, 10, 11, 13, 14, 15, 17, 24, 25};
     private static final int[] BUSHES = {0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14};
     private static final int[] GROUND_PLANTS = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] BOULDERS = {16, 17, 18, 19, 20, 21, 22, 23};
     private static final int[] STONES = {8, 9, 10, 11, 12, 13, 14, 15};
 
     /** The floors of the game's world, as Zomboid's levels: the ground and three above. */
@@ -331,6 +330,11 @@ final class GielinorObjects {
                         if (kind != null) {
                             walls.add(new Wall(level, worldX, worldY, type, l.getOrientation() & 3, kind));
                         }
+                    } else if (type >= 12 && type <= 21) {
+                        // A roof covers the tile on the level below it.
+                        ground.roof(level, worldX - GielinorMap.FIRST_SQUARE_X * 64, worldY - GielinorMap.FIRST_SQUARE_Y * 64,
+                            roofMaterial(def, type));
+                        counts.merge("roof tiles", 1, Integer::sum);
                     } else if ((type == 10 || type == 11) && isStaircase(def)) {
                         boolean turned = (l.getOrientation() & 1) == 1;
                         stairs.add(new int[]{level, worldX, worldY, turned ? def.getSizeY() : def.getSizeX(), turned ? def.getSizeX() : def.getSizeY()});
@@ -356,6 +360,37 @@ final class GielinorObjects {
         placeDoors(levels, doorObjects, edges);
         placeStairs(levels, stairs);
         System.out.println("  objects: " + counts);
+    }
+
+    private final Map<Integer, Integer> roofMaterials = new HashMap<>();
+
+    /** A roof's material, by its model's colour (an index into {@link GielinorMap#ROOF_TILES}). */
+    private int roofMaterial(ObjectDefinition def, int shape) throws IOException {
+        Integer known = roofMaterials.get(def.getId());
+        if (known != null) {
+            return known;
+        }
+        Mesh mesh = models.objectMesh(def, shape);
+        double[] rgb = new double[3];
+        double total = 0;
+        for (int i = 0; i < mesh.faces.size(); i++) {
+            int c = mesh.colours.get(i);
+            rgb[0] += c >> 16 & 255;
+            rgb[1] += c >> 8 & 255;
+            rgb[2] += c & 255;
+            total++;
+        }
+        for (int k = 0; k < 3; k++) {
+            rgb[k] /= Math.max(total, 1);
+        }
+        int material = switch (colourName(rgb)) {
+            case "red" -> 1;
+            case "brown", "tan", "beige" -> 2;
+            case "green" -> 3;
+            default -> 0;
+        };
+        roofMaterials.put(def.getId(), material);
+        return material;
     }
 
     /** Whether an object is a staircase going up: named stairs, and climbed up. */
@@ -630,6 +665,9 @@ final class GielinorObjects {
 
     /** A tree, bush, plant or rock on the ground, one for each of the game's tiles it covers, somewhere on that tile. */
     private void scenery(Placed placed, GielinorMap.GroundGrid ground, ObjectDefinition def, Location l, int worldX, int worldY) {
+        if (rock(placed, ground, def, l, worldX, worldY)) {
+            return;
+        }
         String[] choices = standingChoices(def);
         if (choices == null) {
             return;
@@ -657,6 +695,75 @@ final class GielinorObjects {
     }
 
     /**
+     * Zomboid's large boulders: four, each four sprites making one rock across
+     * two squares by two, by their places in it (SpriteGridPos 0,0 1,0 0,1 1,1).
+     */
+    private static final int[][] BOULDERS_2X2 = {{19, 18, 16, 17}, {23, 22, 20, 21}, {27, 26, 24, 25}, {31, 30, 28, 29}};
+    /** Zomboid's ore rocks (crafting_ore), large then medium, for each ore it has. */
+    private static final int[][] IRON_ORE = {{6, 7, 8}, {3, 4, 5}};
+    private static final int[][] COPPER_ORE = {{22, 23, 24}, {19, 20, 21}};
+    private static final int[][] FLINT = {{32, 33, 34, 35}, {36, 37, 38, 39}};
+    private static final int[][] LIMESTONE = {{40, 41, 42, 43}, {44, 45, 46, 47}};
+
+    /**
+     * Places a rock, if the object is one: a mining rock as the Zomboid ore
+     * nearest its ore (B42 mines iron and copper ore, flint and limestone),
+     * a large ore rock and a medium one on each of the game's tiles it
+     * covers; any other solid rock as a whole large boulder filling each
+     * tile. Returns whether it was a rock (small loose stones aren't: they're
+     * left to {@link #standingChoices}).
+     */
+    private boolean rock(Placed placed, GielinorMap.GroundGrid ground, ObjectDefinition def, Location l, int worldX, int worldY) {
+        String name = name(def);
+        boolean mined = hasOp(def, "mine");
+        boolean solidRock = def.getInteractType() != 0 && (name.contains("rock") || name.contains("boulder") || name.equals("stone"));
+        if (!mined && !solidRock) {
+            return false;
+        }
+        int[][] ore = !mined ? null
+            : name.contains("copper") || name.contains("tin") ? COPPER_ORE
+            : name.contains("limestone") || name.contains("clay") || name.contains("sandstone") ? LIMESTONE
+            : name.contains("gem") || name.contains("granite") ? FLINT
+            : name.equals("rocks") || name.contains("pile") || name.contains("slide") ? null
+            : IRON_ORE;
+        counts.merge(ore == null ? "boulders" : ore == COPPER_ORE ? "copper ore" : ore == IRON_ORE ? "iron ore" : ore == FLINT ? "flint" : "limestone",
+            1, Integer::sum);
+        int scale = GielinorMap.SCALE;
+        int x0 = (worldX - GielinorMap.FIRST_SQUARE_X * 64) * scale;
+        int y0 = placed.height - (worldY - GielinorMap.FIRST_SQUARE_Y * 64 + 1) * scale;
+        int turn = l.getOrientation() & 3;
+        int w = turn % 2 == 0 ? def.getSizeX() : def.getSizeY();
+        int h = turn % 2 == 0 ? def.getSizeY() : def.getSizeX();
+        for (int tx = 0; tx < w; tx++) {
+            for (int ty = 0; ty < h; ty++) {
+                int x = x0 + tx * scale;
+                int y = y0 - ty * scale;
+                if (!dry(placed, ground, x, y) || !dry(placed, ground, x + 1, y + 1)) {
+                    continue;
+                }
+                int hash = GielinorMap.scramble(x, y);
+                if (ore == null) {
+                    int[] group = BOULDERS_2X2[Math.floorMod(hash, BOULDERS_2X2.length)];
+                    placed.stand(x, y, "boulders_" + group[0]);
+                    placed.stand(x + 1, y, "boulders_" + group[1]);
+                    placed.stand(x, y + 1, "boulders_" + group[2]);
+                    placed.stand(x + 1, y + 1, "boulders_" + group[3]);
+                } else {
+                    // A large rock in one corner and a medium one across from it.
+                    boolean flip = (hash & 1) == 0;
+                    placed.stand(flip ? x : x + 1, y, "crafting_ore_" + ore[0][Math.floorMod(hash >> 4, ore[0].length)]);
+                    placed.stand(flip ? x + 1 : x, y + 1, "crafting_ore_" + ore[1][Math.floorMod(hash >> 8, ore[1].length)]);
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean dry(Placed placed, GielinorMap.GroundGrid ground, int x, int y) {
+        return placed.inside(x, y) && ground.at(x, y) != null && ground.at(x, y) != GielinorTerrain.Ground.WATER;
+    }
+
+    /**
      * What a scenery object becomes, by its name: a kind (for the counts)
      * then the tiles to choose from, or null for nothing.
      */
@@ -671,7 +778,7 @@ final class GielinorObjects {
             return tiles("trees", "vegetation_trees_01", TREES);
         }
         if (name.contains("rock") || name.contains("boulder") || name.equals("stone") || name.equals("stones")) {
-            return def.getInteractType() != 0 ? tiles("rocks", "boulders", BOULDERS) : tiles("stones", "boulders", STONES);
+            return tiles("stones", "boulders", STONES);
         }
         if (name.contains("bush") || name.contains("hedge") || name.contains("bramble") || name.equals("plant") || name.equals("plants")
                 || name.contains("jungle plant") || name.contains("creeping plant") || name.contains("cactus") || name.contains("shrub")) {
@@ -720,11 +827,12 @@ final class GielinorObjects {
             return null;
         }
         String colour = colourName(averageColour(mesh));
-        if (def.isBlocksProjectile() && top >= LOW && window(mesh, top)) {
-            // A building's wall with a window: big windows leave it more gap than wall.
+        double solid = covered(mesh, top, 0.05, 0.95);
+        if (top >= LOW && (name(def).contains("window") || window(mesh, top) && (def.isBlocksProjectile() || solid >= SOLID))) {
+            // A building's wall with a window: big windows leave it more gap
+            // than wall, and arrows fly through some.
             return new WallKind(buildingStyle(colour), true);
         }
-        double solid = covered(mesh, top, 0.05, 0.95);
         double[] rgb = averageColour(mesh);
         double chroma = (Math.max(rgb[0], Math.max(rgb[1], rgb[2])) - Math.min(rgb[0], Math.min(rgb[1], rgb[2]))) / 255;
         // The game's wood is warm and strongly coloured; its stone and iron are near grey.

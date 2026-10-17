@@ -66,6 +66,12 @@ final class GielinorMap {
         static final int FLOOR = 1;
         static final int STONE = 2;
         static final int ROOFED = 4;
+        /**
+         * Each tile's roofs from the game's roof objects: a bit for each level
+         * with a roof (1 << level, levels 1 to 4) and its material in the top
+         * three bits (see {@link #ROOF_TILES}), made when first set.
+         */
+        private byte[] roofs;
         private static final int INDOOR = 1;
         private static final int LOADED = 2;
 
@@ -87,12 +93,45 @@ final class GielinorMap {
             flags[tx + ty * tilesX] = (byte) (LOADED | (indoor ? INDOOR : 0));
         }
 
+        /**
+         * Notes a roof on a level over a tile (the game's roof objects stand on
+         * the level above what they cover), of a material (an index into
+         * {@link #ROOF_TILES}), and the tile under it as indoors.
+         */
+        void roof(int level, int tx, int ty, int material) {
+            if (level < 1 || level > 4 || tx < 0 || ty < 0 || tx >= tilesX || ty >= tilesY) {
+                return;
+            }
+            if (roofs == null) {
+                roofs = new byte[tilesX * tilesY];
+            }
+            int i = tx + ty * tilesX;
+            roofs[i] = (byte) ((roofs[i] & 0x1f) | 1 << level | material << 5);
+            if (level == 1) {
+                flags[i] |= INDOOR;
+            } else if (level - 1 < GielinorObjects.LEVELS) {
+                if (upper[level - 1] == null) {
+                    upper[level - 1] = new byte[tilesX * tilesY];
+                }
+                upper[level - 1][i] |= ROOFED;
+            }
+        }
+
+        /** The roof tile on a level over a Zomboid square (see {@link #roof}), or null for none. */
+        String roofAt(int level, int zx, int zy) {
+            if (roofs == null || zx < 0 || zy < 0 || zx >= width || zy >= height) {
+                return null;
+            }
+            int r = roofs[zx / SCALE + (tilesY - 1 - zy / SCALE) * tilesX] & 0xff;
+            return (r & 1 << level) == 0 ? null : ROOF_TILES[r >> 5];
+        }
+
         /** Notes a tile's floor on a level above the ground: {@link #FLOOR}, {@link #STONE} and {@link #ROOFED} bits. */
         void setUpper(int level, int tx, int ty, int bits) {
             if (upper[level] == null) {
                 upper[level] = new byte[tilesX * tilesY];
             }
-            upper[level][tx + ty * tilesX] = (byte) bits;
+            upper[level][tx + ty * tilesX] |= (byte) bits;
         }
 
         /** A Zomboid square's floor on a level above the ground (see {@link #setUpper}), 0 for none. */
@@ -262,8 +301,21 @@ final class GielinorMap {
                             }
                             standing(levels[z], zx, zy, stack.get(z), true);
                         }
-                        // A roof over the highest floor, if the game roofs it (never over a stairwell).
-                        if (top >= 0 && roofed && (top + 1 >= GielinorObjects.LEVELS || !levels[top + 1].isOpen(zx, zy))) {
+                        // The game's roofs, on each level where it has one, but where
+                        // that level has a floor (which is the roof then) or a
+                        // stairwell; else, where the game only marks the highest
+                        // floor as roofed, a roof over it.
+                        boolean roofs = false;
+                        for (int z = 1; z < MapCell.LEVELS; z++) {
+                            String roof = ground.roofAt(z, zx, zy);
+                            boolean floored = z < GielinorObjects.LEVELS && ((ground.upper(z, zx, zy) & GroundGrid.FLOOR) != 0
+                                || levels[z].isOpen(zx, zy));
+                            if (roof != null && !floored && z > top) {
+                                stack.get(z).add(0, roof);
+                                roofs = true;
+                            }
+                        }
+                        if (!roofs && top >= 0 && roofed && (top + 1 >= GielinorObjects.LEVELS || !levels[top + 1].isOpen(zx, zy))) {
                             stack.get(top + 1).add(0, stone ? SLATE_ROOF : SHINGLE_ROOF);
                         }
                         for (int z = 0; z < MapCell.LEVELS; z++) {
@@ -337,11 +389,18 @@ final class GielinorMap {
         String thing = placed.standing(x, y);
         if (thing != null && dry) {
             tiles.add(thing);
-            if (thing.startsWith("boulders_") && Integer.parseInt(thing.substring("boulders_".length())) >= 16) {
+            if (solid(thing)) {
                 bits |= MapCell.BIT_SOLID;
             }
         }
         return bits;
+    }
+
+    /** Whether something standing on a square blocks the way: a large boulder or large ore rock. */
+    private static boolean solid(String tile) {
+        int i = Integer.parseInt(tile.substring(tile.lastIndexOf('_') + 1));
+        return tile.startsWith("boulders_") && i >= 16
+            || tile.startsWith("crafting_ore_") && (i >= 6 && i <= 8 || i >= 22 && i <= 24);
     }
 
     /** Whether an edge's gap opens (a door or a gate), so isn't a wall to find a way past. */
@@ -372,6 +431,8 @@ final class GielinorMap {
     private static final String STONE_FLOOR = "floors_exterior_tilesandstone_01_5";
     private static final String SHINGLE_ROOF = "roofs_02_22";
     private static final String SLATE_ROOF = "roofs_01_22";
+    /** Roofs by the colour of the game's roof: slate (grey or blue), red tiles, brown (thatch, wood) and green. */
+    static final String[] ROOF_TILES = {"roofs_01_22", "roofs_04_22", "roofs_03_22", "roofs_05_22"};
     /** The room name for now: the rooms hold nothing yet that their name would choose. */
     private static final String ROOM = "gielinor";
 

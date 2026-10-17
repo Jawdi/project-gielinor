@@ -53,12 +53,13 @@ final class MapCell {
 
     final int cellX;
     final int cellY;
-    /** Each square's tiles at ground level, floor first, by x + y * SIZE (null for none). */
-    private final String[][] squares = new String[SIZE * SIZE][];
-    /** Each square's tiles a level up (roofs), as {@link #squares}. */
-    private final String[][] above = new String[SIZE * SIZE][];
-    /** The rooms, each a name and its rectangles (x, y, width, height). */
+    /** The most levels a cell has: the game's four floors and a roof over the top one. */
+    static final int LEVELS = 5;
+    /** Each level's squares' tiles, floor first, by x + y * SIZE (null for none), made as they're first set. */
+    private final String[][][] levels = new String[LEVELS][][];
+    /** The rooms, each a name, its level and its rectangles (x, y, width, height). */
     private final List<String> roomNames = new ArrayList<>();
+    private final List<Integer> roomLevels = new ArrayList<>();
     private final List<List<int[]>> roomRects = new ArrayList<>();
     /** The buildings, each its rooms by their place in the list. */
     private final List<List<Integer>> buildings = new ArrayList<>();
@@ -72,19 +73,23 @@ final class MapCell {
         this.cellY = cellY;
     }
 
-    /** Sets a square's tiles (cell-local coordinates), floor first. */
+    /** Sets a square's tiles on the ground (cell-local coordinates), floor first. */
     void set(int x, int y, String... tiles) {
-        squares[x + y * SIZE] = tiles;
+        set(0, x, y, tiles);
     }
 
-    /** Sets a square's tiles a level up (cell-local coordinates). */
-    void setAbove(int x, int y, String... tiles) {
-        above[x + y * SIZE] = tiles;
+    /** Sets a square's tiles on a level (cell-local coordinates), floor first. */
+    void set(int level, int x, int y, String... tiles) {
+        if (levels[level] == null) {
+            levels[level] = new String[SIZE * SIZE][];
+        }
+        levels[level][x + y * SIZE] = tiles;
     }
 
-    /** Adds a room on the ground level, returning its place in the list. */
-    int addRoom(String name, List<int[]> rects) {
+    /** Adds a room on a level, returning its place in the list. */
+    int addRoom(String name, int level, List<int[]> rects) {
         roomNames.add(name);
+        roomLevels.add(level);
         roomRects.add(rects);
         return roomNames.size() - 1;
     }
@@ -104,7 +109,10 @@ final class MapCell {
     void write(Path dir) throws IOException {
         Map<String, Integer> index = new HashMap<>();
         List<String> used = new ArrayList<>();
-        for (String[][] level : new String[][][]{squares, above}) {
+        for (String[][] level : levels) {
+            if (level == null) {
+                continue;
+            }
             for (String[] tiles : level) {
                 if (tiles != null) {
                     for (String t : tiles) {
@@ -139,7 +147,7 @@ final class MapCell {
         for (int r = 0; r < roomNames.size(); r++) {
             out.writeBytes(roomNames.get(r).getBytes(StandardCharsets.UTF_8));
             out.write('\n');
-            writeInt(out, ints, 0);
+            writeInt(out, ints, roomLevels.get(r));
             writeInt(out, ints, roomRects.get(r).size());
             for (int[] rect : roomRects.get(r)) {
                 for (int v : rect) {
@@ -176,10 +184,10 @@ final class MapCell {
                 out.putLong(tableStart + (cx * CHUNKS + cy) * 8, out.position());
                 int empty = 0;
                 for (int z = 0; z <= top; z++) {
-                    String[][] level = z == 0 ? squares : above;
+                    String[][] level = levels[z];
                     for (int x = 0; x < CHUNK; x++) {
                         for (int y = 0; y < CHUNK; y++) {
-                            String[] tiles = level[cx * CHUNK + x + (cy * CHUNK + y) * SIZE];
+                            String[] tiles = level == null ? null : level[cx * CHUNK + x + (cy * CHUNK + y) * SIZE];
                             if (tiles == null || tiles.length == 0) {
                                 empty++;
                                 continue;
@@ -208,11 +216,15 @@ final class MapCell {
         return result;
     }
 
-    /** The highest level with anything on it: 1 if anything's a level up, else 0. */
+    /** The highest level with anything on it. */
     private int topLevel() {
-        for (String[] tiles : above) {
-            if (tiles != null && tiles.length > 0) {
-                return 1;
+        for (int z = LEVELS - 1; z > 0; z--) {
+            if (levels[z] != null) {
+                for (String[] tiles : levels[z]) {
+                    if (tiles != null && tiles.length > 0) {
+                        return z;
+                    }
+                }
             }
         }
         return 0;

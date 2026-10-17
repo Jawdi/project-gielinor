@@ -61,6 +61,11 @@ final class GielinorMap {
         private final byte[] tiles;
         /** Each tile's {@link #INDOOR} and {@link #LOADED} bits. */
         private final byte[] flags;
+        /** Each level above the ground's tiles (made as they're first set): {@link #FLOOR}, {@link #STONE} and {@link #ROOFED} bits. */
+        private final byte[][] upper = new byte[GielinorObjects.LEVELS][];
+        static final int FLOOR = 1;
+        static final int STONE = 2;
+        static final int ROOFED = 4;
         private static final int INDOOR = 1;
         private static final int LOADED = 2;
 
@@ -80,6 +85,22 @@ final class GielinorMap {
         /** Notes a tile as part of the game's world (its square loaded), and whether it's indoors. */
         void setLoaded(int tx, int ty, boolean indoor) {
             flags[tx + ty * tilesX] = (byte) (LOADED | (indoor ? INDOOR : 0));
+        }
+
+        /** Notes a tile's floor on a level above the ground: {@link #FLOOR}, {@link #STONE} and {@link #ROOFED} bits. */
+        void setUpper(int level, int tx, int ty, int bits) {
+            if (upper[level] == null) {
+                upper[level] = new byte[tilesX * tilesY];
+            }
+            upper[level][tx + ty * tilesX] = (byte) bits;
+        }
+
+        /** A Zomboid square's floor on a level above the ground (see {@link #setUpper}), 0 for none. */
+        int upper(int level, int zx, int zy) {
+            if (upper[level] == null || zx < 0 || zy < 0 || zx >= width || zy >= height) {
+                return 0;
+            }
+            return upper[level][zx / SCALE + (tilesY - 1 - zy / SCALE) * tilesX];
         }
 
         /** Whether a Zomboid square is indoors (see {@link GielinorTerrain#indoor}). */
@@ -161,6 +182,7 @@ final class GielinorMap {
             floors.put(g, found);
         }
         GroundGrid ground = new GroundGrid(LAST_SQUARE_X - FIRST_SQUARE_X + 1, LAST_SQUARE_Y - FIRST_SQUARE_Y + 1);
+        int upperFloors = 0;
         Map<GielinorTerrain.Ground, Integer> counts = new EnumMap<>(GielinorTerrain.Ground.class);
         for (int sx = FIRST_SQUARE_X; sx <= LAST_SQUARE_X; sx++) {
             for (int sy = FIRST_SQUARE_Y; sy <= LAST_SQUARE_Y; sy++) {
@@ -170,12 +192,19 @@ final class GielinorMap {
                 }
                 for (int lx = 0; lx < 64; lx++) {
                     for (int ly = 0; ly < 64; ly++) {
-                        ground.setLoaded((sx - FIRST_SQUARE_X) * 64 + lx, (sy - FIRST_SQUARE_Y) * 64 + ly,
-                            GielinorTerrain.indoor(square.getTiles()[0][lx][ly]));
-                        GielinorTerrain.Ground g = terrain.ground(square.getTiles()[0][lx][ly]);
+                        MapDefinition.Tile tile = GielinorTerrain.tile(square, 0, lx, ly);
+                        ground.setLoaded((sx - FIRST_SQUARE_X) * 64 + lx, (sy - FIRST_SQUARE_Y) * 64 + ly, GielinorTerrain.indoor(tile));
+                        GielinorTerrain.Ground g = terrain.groundLevel(square, lx, ly);
                         if (g != null) {
                             counts.merge(g, 1, Integer::sum);
                             ground.setTile((sx - FIRST_SQUARE_X) * 64 + lx, (sy - FIRST_SQUARE_Y) * 64 + ly, g);
+                        }
+                        for (int level = 1; level < GielinorObjects.LEVELS; level++) {
+                            int bits = upperFloor(terrain, GielinorTerrain.tile(square, level, lx, ly));
+                            if (bits != 0) {
+                                ground.setUpper(level, (sx - FIRST_SQUARE_X) * 64 + lx, (sy - FIRST_SQUARE_Y) * 64 + ly, bits);
+                                upperFloors++;
+                            }
                         }
                     }
                 }
@@ -184,8 +213,9 @@ final class GielinorMap {
         int gaps = ground.fillGaps();
         int width = ground.width;
         int height = ground.height;
-        GielinorObjects.Placed placed = new GielinorObjects.Placed(width, height);
-        objects.place(placed, ground);
+        GielinorObjects.Placed[] levels = GielinorObjects.Placed.levels(width, height);
+        objects.place(levels, ground, terrain);
+        GielinorObjects.Placed placed = levels[0];
         int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
         int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
         int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
@@ -198,25 +228,49 @@ final class GielinorMap {
                         int zx = cx * MapCell.SIZE + x;
                         int zy = cy * MapCell.SIZE + y;
                         GielinorTerrain.Ground g = ground.at(zx, zy);
-                        if (g == null) {
-                            continue;
+                        List<List<String>> stack = new java.util.ArrayList<>();
+                        for (int z = 0; z < MapCell.LEVELS; z++) {
+                            stack.add(new java.util.ArrayList<>());
                         }
-                        List<String> choices = floors.get(g);
-                        // The same square always gets the same of the material's tiles.
-                        List<String> square = new java.util.ArrayList<>();
-                        boolean inside = g != GielinorTerrain.Ground.WATER && ground.indoor(zx, zy);
-                        if (inside) {
-                            // Indoors: a wooden or stone floor, and a roof a level up.
-                            boolean stone = g == GielinorTerrain.Ground.STONE;
-                            square.add(stone ? STONE_FLOOR : WOODEN_FLOOR);
-                            cell.setAbove(x, y, stone ? SLATE_ROOF : SHINGLE_ROOF);
-                        } else {
-                            square.add(choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
+                        // The highest floor, whether it's under a roof, and whether it's stone.
+                        int top = -1;
+                        boolean roofed = false;
+                        boolean stone = false;
+                        if (g != null) {
+                            List<String> choices = floors.get(g);
+                            boolean inside = g != GielinorTerrain.Ground.WATER && ground.indoor(zx, zy);
+                            stone = g == GielinorTerrain.Ground.STONE;
+                            // Indoors a wooden or stone floor; outdoors the ground, the
+                            // same square always getting the same of its tiles.
+                            stack.get(0).add(inside || g == GielinorTerrain.Ground.DECK ? (stone ? STONE_FLOOR : WOODEN_FLOOR)
+                                : choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
+                            int bits = g == GielinorTerrain.Ground.WATER ? MapCell.BIT_WATER : inside ? MapCell.BIT_ROOM : 0;
+                            bits |= standing(placed, zx, zy, stack.get(0), g != GielinorTerrain.Ground.WATER);
+                            cell.setBits(x, y, bits);
+                            top = 0;
+                            roofed = inside;
                         }
-                        int bits = g == GielinorTerrain.Ground.WATER ? MapCell.BIT_WATER : inside ? MapCell.BIT_ROOM : 0;
-                        bits |= standing(placed, zx, zy, square, g != GielinorTerrain.Ground.WATER);
-                        cell.set(x, y, square.toArray(new String[0]));
-                        cell.setBits(x, y, bits);
+                        for (int z = 1; z < GielinorObjects.LEVELS; z++) {
+                            int u = ground.upper(z, zx, zy);
+                            if ((u & GroundGrid.FLOOR) != 0 || levels[z].isLanding(zx, zy)) {
+                                if (!levels[z].isOpen(zx, zy)) {
+                                    stack.get(z).add((u & GroundGrid.STONE) != 0 ? STONE_FLOOR : WOODEN_FLOOR);
+                                }
+                                top = z;
+                                roofed = (u & GroundGrid.ROOFED) != 0;
+                                stone = (u & GroundGrid.STONE) != 0;
+                            }
+                            standing(levels[z], zx, zy, stack.get(z), true);
+                        }
+                        // A roof over the highest floor, if the game roofs it (never over a stairwell).
+                        if (top >= 0 && roofed && (top + 1 >= GielinorObjects.LEVELS || !levels[top + 1].isOpen(zx, zy))) {
+                            stack.get(top + 1).add(0, stone ? SLATE_ROOF : SHINGLE_ROOF);
+                        }
+                        for (int z = 0; z < MapCell.LEVELS; z++) {
+                            if (!stack.get(z).isEmpty()) {
+                                cell.set(z, x, y, stack.get(z).toArray(new String[0]));
+                            }
+                        }
                     }
                 }
                 // Zombies everywhere but on water and around where characters start.
@@ -239,7 +293,7 @@ final class GielinorMap {
                         cell.setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
                 }
-                rooms(cell, ground, placed);
+                rooms(cell, ground, levels);
                 cell.write(dir);
             }
         }
@@ -248,7 +302,7 @@ final class GielinorMap {
         writeSpawnPoints(dir, startX, startY);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
         System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts + ", " + gaps + " gaps filled, "
-            + roomCount + " rooms in " + buildingCount + " buildings");
+            + roomCount + " rooms in " + buildingCount + " buildings, " + upperFloors + " tiles of upper floors");
     }
 
     /**
@@ -263,12 +317,6 @@ final class GielinorMap {
         GielinorObjects.Style north = placed.style(x, y, false);
         int westGap = placed.gap(x, y, true);
         int northGap = placed.gap(x, y, false);
-        if (west == null && westGap == GielinorObjects.DOOR) {
-            west = doorFrame(placed, x, y, true);
-        }
-        if (north == null && northGap == GielinorObjects.DOOR) {
-            north = doorFrame(placed, x, y, false);
-        }
         int bits = 0;
         if (west != null && west == north && westGap == GielinorObjects.NONE && northGap == GielinorObjects.NONE) {
             tiles.add(west.wall(true, true));
@@ -280,10 +328,10 @@ final class GielinorMap {
                 edgeTiles(tiles, north, northGap, false);
             }
         }
-        if (west != null && westGap != GielinorObjects.DOOR && westGap != GielinorObjects.GATE) {
+        if (west != null && !opens(westGap)) {
             bits |= MapCell.BIT_WALL_WEST;
         }
-        if (north != null && northGap != GielinorObjects.DOOR && northGap != GielinorObjects.GATE) {
+        if (north != null && !opens(northGap)) {
             bits |= MapCell.BIT_WALL_NORTH;
         }
         String thing = placed.standing(x, y);
@@ -296,11 +344,18 @@ final class GielinorMap {
         return bits;
     }
 
+    /** Whether an edge's gap opens (a door or a gate), so isn't a wall to find a way past. */
+    private static boolean opens(int gap) {
+        return gap == GielinorObjects.DOOR || gap == GielinorObjects.GATE || gap >= GielinorObjects.DOUBLE_GATE;
+    }
+
     /** A wall's tiles along one edge: the wall, or its frame and what's in it. */
     private static void edgeTiles(List<String> tiles, GielinorObjects.Style style, int gap, boolean west) {
         boolean building = style.building();
-        if (gap == GielinorObjects.GATE || gap == GielinorObjects.DOOR && !building) {
-            tiles.add(west ? "fixtures_doors_fences_01_4" : "fixtures_doors_fences_01_5");
+        if (gap >= GielinorObjects.DOUBLE_GATE) {
+            tiles.add(style.doubleGate(west, gap - GielinorObjects.DOUBLE_GATE + 1));
+        } else if (gap == GielinorObjects.GATE || gap == GielinorObjects.DOOR && !building) {
+            tiles.add(style.gate(west));
         } else if (gap == GielinorObjects.DOOR) {
             tiles.add(style.frame(west, true));
             tiles.add(west ? "fixtures_doors_01_8" : "fixtures_doors_01_9");
@@ -310,23 +365,6 @@ final class GielinorMap {
         } else {
             tiles.add(style.wall(west, !west));
         }
-    }
-
-    /** The wall a door stands in: the nearest building wall along its line, else logs. */
-    private static GielinorObjects.Style doorFrame(GielinorObjects.Placed placed, int x, int y, boolean west) {
-        for (int d = 1; d <= 3; d++) {
-            for (int sign : new int[]{-1, 1}) {
-                int nx = west ? x : x + sign * d;
-                int ny = west ? y + sign * d : y;
-                if (placed.inside(nx, ny)) {
-                    GielinorObjects.Style s = placed.style(nx, ny, west);
-                    if (s != null && s.building()) {
-                        return s;
-                    }
-                }
-            }
-        }
-        return GielinorObjects.Style.LOGS;
     }
 
     /** Indoor floors and roofs (Zomboid's tiles): planks, flagstones, shingles over wood and slate over stone. */
@@ -341,85 +379,128 @@ final class GielinorMap {
     private static int buildingCount;
 
     /**
-     * The cell's rooms and buildings, from its indoor squares: a room is the
+     * The bits a level above the ground has at a tile (see
+     * {@link GroundGrid#setUpper}): a floor where the game paints one there
+     * (an overlay, as its upper storeys are painted, or an underlay under a
+     * roof), of stone or wood by its look, and whether it's roofed.
+     */
+    private static int upperFloor(GielinorTerrain terrain, MapDefinition.Tile tile) {
+        if (tile == null) {
+            return 0;
+        }
+        boolean roofed = GielinorTerrain.indoor(tile);
+        boolean painted = (tile.getOverlayId() & 0xffff) > 0 || roofed && (tile.getUnderlayId() & 0xffff) > 0;
+        GielinorTerrain.Ground g = painted ? terrain.ground(tile) : null;
+        if (g == null || g == GielinorTerrain.Ground.WATER) {
+            return 0;
+        }
+        return GroundGrid.FLOOR | (g == GielinorTerrain.Ground.STONE ? GroundGrid.STONE : 0) | (roofed ? GroundGrid.ROOFED : 0);
+    }
+
+    /**
+     * The cell's rooms and buildings: on each level, a room is the indoor
      * squares reached from one another without crossing a wall (or a door),
      * written as rectangles; a building the rooms whose squares touch, walls
-     * or not. A building across a cell's edge is one in each cell.
+     * or not, and those above and below one another. A building across a
+     * cell's edge is one in each cell.
      */
-    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed placed) {
+    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed[] levels) {
         int size = MapCell.SIZE;
         int x0 = cell.cellX * size;
         int y0 = cell.cellY * size;
-        int[] room = new int[size * size];
-        java.util.Arrays.fill(room, -1);
+        int[][] room = new int[GielinorObjects.LEVELS][size * size];
         int[] queue = new int[size * size];
-        for (int start = 0; start < size * size; start++) {
-            if (room[start] != -1 || !indoorSquare(ground, x0 + start % size, y0 + start / size)) {
-                continue;
-            }
-            // The squares of one room.
-            List<Integer> squares = new java.util.ArrayList<>();
-            int head = 0;
-            int tail = 0;
-            queue[tail++] = start;
-            room[start] = -2;
-            while (head < tail) {
-                int i = queue[head++];
-                squares.add(i);
-                int x = i % size;
-                int y = i / size;
-                int[][] steps = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-                for (int[] s : steps) {
-                    int nx = x + s[0];
-                    int ny = y + s[1];
-                    if (nx < 0 || ny < 0 || nx >= size || ny >= size || room[nx + ny * size] != -1
-                            || !indoorSquare(ground, x0 + nx, y0 + ny) || walled(placed, x0 + x, y0 + y, x0 + nx, y0 + ny)) {
-                        continue;
-                    }
-                    room[nx + ny * size] = -2;
-                    queue[tail++] = nx + ny * size;
+        int rooms = 0;
+        for (int z = 0; z < GielinorObjects.LEVELS; z++) {
+            int[] here = room[z];
+            java.util.Arrays.fill(here, -1);
+            for (int start = 0; start < size * size; start++) {
+                if (here[start] != -1 || !indoor(ground, levels, z, x0 + start % size, y0 + start / size)) {
+                    continue;
                 }
-            }
-            int id = cell.addRoom(ROOM, rectangles(squares, size));
-            for (int i : squares) {
-                room[i] = id;
-            }
-            roomCount++;
-        }
-        // The buildings: rooms whose squares touch.
-        boolean[] seen = new boolean[size * size];
-        for (int start = 0; start < size * size; start++) {
-            if (seen[start] || room[start] < 0) {
-                continue;
-            }
-            java.util.TreeSet<Integer> rooms = new java.util.TreeSet<>();
-            int head = 0;
-            int tail = 0;
-            queue[tail++] = start;
-            seen[start] = true;
-            while (head < tail) {
-                int i = queue[head++];
-                rooms.add(room[i]);
-                int x = i % size;
-                int y = i / size;
-                int[][] steps = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-                for (int[] s : steps) {
-                    int nx = x + s[0];
-                    int ny = y + s[1];
-                    if (nx >= 0 && ny >= 0 && nx < size && ny < size && !seen[nx + ny * size] && room[nx + ny * size] >= 0) {
-                        seen[nx + ny * size] = true;
+                List<Integer> squares = new java.util.ArrayList<>();
+                int head = 0;
+                int tail = 0;
+                queue[tail++] = start;
+                here[start] = -2;
+                while (head < tail) {
+                    int i = queue[head++];
+                    squares.add(i);
+                    int x = i % size;
+                    int y = i / size;
+                    for (int[] step : STEPS) {
+                        int nx = x + step[0];
+                        int ny = y + step[1];
+                        if (nx < 0 || ny < 0 || nx >= size || ny >= size || here[nx + ny * size] != -1
+                                || !indoor(ground, levels, z, x0 + nx, y0 + ny) || walled(levels[z], x0 + x, y0 + y, x0 + nx, y0 + ny)) {
+                            continue;
+                        }
+                        here[nx + ny * size] = -2;
                         queue[tail++] = nx + ny * size;
                     }
                 }
+                int id = cell.addRoom(ROOM, z, rectangles(squares, size));
+                for (int i : squares) {
+                    here[i] = id;
+                }
+                rooms++;
             }
-            cell.addBuilding(new java.util.ArrayList<>(rooms));
+        }
+        roomCount += rooms;
+        // The buildings: rooms touching side by side, or one over another.
+        int[] parent = new int[rooms];
+        for (int i = 0; i < rooms; i++) {
+            parent[i] = i;
+        }
+        for (int z = 0; z < GielinorObjects.LEVELS; z++) {
+            for (int i = 0; i < size * size; i++) {
+                int r = room[z][i];
+                if (r < 0) {
+                    continue;
+                }
+                if (i % size + 1 < size && room[z][i + 1] >= 0) {
+                    join(parent, r, room[z][i + 1]);
+                }
+                if (i + size < size * size && room[z][i + size] >= 0) {
+                    join(parent, r, room[z][i + size]);
+                }
+                if (z > 0 && room[z - 1][i] >= 0) {
+                    join(parent, r, room[z - 1][i]);
+                }
+            }
+        }
+        Map<Integer, List<Integer>> buildings = new java.util.TreeMap<>();
+        for (int r = 0; r < rooms; r++) {
+            buildings.computeIfAbsent(root(parent, r), k -> new java.util.ArrayList<>()).add(r);
+        }
+        for (List<Integer> b : buildings.values()) {
+            cell.addBuilding(b);
             buildingCount++;
         }
     }
 
-    private static boolean indoorSquare(GroundGrid ground, int zx, int zy) {
-        GielinorTerrain.Ground g = ground.at(zx, zy);
-        return g != null && g != GielinorTerrain.Ground.WATER && ground.indoor(zx, zy);
+    private static final int[][] STEPS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+    private static int root(int[] parent, int i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    }
+
+    private static void join(int[] parent, int a, int b) {
+        parent[root(parent, a)] = root(parent, b);
+    }
+
+    /** Whether a square on a level is indoors: on the ground, roofed ground; above it, a roofed floor (not over stairs). */
+    private static boolean indoor(GroundGrid ground, GielinorObjects.Placed[] levels, int z, int zx, int zy) {
+        if (z == 0) {
+            GielinorTerrain.Ground g = ground.at(zx, zy);
+            return g != null && g != GielinorTerrain.Ground.WATER && ground.indoor(zx, zy);
+        }
+        int u = ground.upper(z, zx, zy);
+        return (u & GroundGrid.FLOOR) != 0 && (u & GroundGrid.ROOFED) != 0 && !levels[z].isOpen(zx, zy);
     }
 
     /** Whether a wall (or door, or gate) stands between two squares side by side. */
@@ -509,7 +590,7 @@ final class GielinorMap {
             case WATER -> new String[]{"water", "river"};
             case STONE -> new String[]{"gielinor", "stone"};
             case SAND -> new String[]{"gielinor", "sand"};
-            case DIRT -> new String[]{"gielinor", "dirt"};
+            case DIRT, DECK -> new String[]{"gielinor", "dirt"};
             default -> null;
         };
     }

@@ -3,34 +3,48 @@ package gielinor.builder;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import net.runelite.cache.EntityOpsDefinition;
 import net.runelite.cache.ObjectManager;
 import net.runelite.cache.definitions.LocationsDefinition;
+import net.runelite.cache.definitions.MapDefinition;
 import net.runelite.cache.definitions.ObjectDefinition;
 import net.runelite.cache.fs.Store;
 import net.runelite.cache.region.Location;
 import net.runelite.cache.region.RegionLoader;
 
 /**
- * The things standing in the game's world, on its ground level: walls,
- * fences, doors, gates and windows along the edges of its tiles, and trees,
- * bushes, plants and rocks on them, each as Zomboid's own (so its doors
- * open, its trees are chopped and grow through the seasons, its fences are
+ * The things standing in the game's world: walls, fences, doors, gates and
+ * windows along the edges of its tiles, on every floor, and trees, bushes,
+ * plants and rocks on its ground, each as Zomboid's own (so its doors open,
+ * its trees are chopped and grow through the seasons, its fences are
  * climbed). Read from the game's map squares (each square's objects are
  * locked with a key, see {@link Pinned#keys}).
  *
- * The game's walls are mostly unnamed, so a wall is sorted by its model:
+ * <p>The game's walls are mostly unnamed, so a wall is sorted by its model:
  * walls that don't block are left out (archways), as are walls with nothing
- * to see (the invisible lines the game fences cliffs and edges with, which
- * Zomboid has no use for); low walls are fences, railings or low walls by
- * colour and whether they can be seen through; the rest are buildings' walls
- * of stone, plaster, brick or logs by colour, with a window where the model
- * has an opening halfway up.
+ * to see (the invisible lines the game fences cliffs and edges with). A wall
+ * that doesn't stop arrows (the game's own mark of a fence) or that's mostly
+ * gaps is a wooden fence if it's coloured like the game's wood (warm and
+ * strong), else a low stone wall if it's fairly solid (a dry stone wall) or
+ * an iron railing; the rest are buildings' walls, of stone, plaster, brick or
+ * wood by colour, with a window where the model has an opening halfway up
+ * (wall below and above it).
+ *
+ * <p>A door is placed where it closes. The game stores some doors open,
+ * swung out a tile from their doorway and turned a quarter; those are turned
+ * back into their doorway (as the game turns them, a single door one way and
+ * a leaf of a double door the other, whichever lands in the wall's gap). A
+ * tile is two Zomboid squares across: a single door takes one of them and
+ * the wall the other; two doors side by side are a double door across four,
+ * as Zomboid's own double gates are.
  */
 final class GielinorObjects {
     /** A wall's look: which of Zomboid's wall tiles it's made of. */
@@ -39,10 +53,11 @@ final class GielinorObjects {
         GREY_STONE("walls_exterior_house_02", 16),
         PLASTER("walls_exterior_house_02", 48),
         BRICK("walls_exterior_house_02", 64),
+        WOOD("walls_exterior_wooden_01", 0),
         LOGS("walls_logs", 0),
         LOW_WALL("walls_exterior_house_low_01", 0),
-        FENCE("fencing_01", -1),
-        RAILING("fencing_01", -2);
+        FENCE("crafted_02", -1),
+        RAILING("fencing_01", -1);
 
         final String sheet;
         final int base;
@@ -54,31 +69,44 @@ final class GielinorObjects {
 
         /** Whether it's a building's wall, with windows and door frames. */
         boolean building() {
-            return base >= 0 && this != LOW_WALL;
+            return this != LOW_WALL && this != FENCE && this != RAILING;
         }
 
         /** The west wall, north wall or both (a corner), as a tile. */
         String wall(boolean west, boolean north) {
-            if (this == FENCE) {
-                return "fencing_01_" + (west && north ? 36 : west ? 34 : 32);
-            }
-            if (this == RAILING) {
-                return "fencing_01_" + (west && north ? 3 : west ? 2 : 1);
-            }
-            return sheet + "_" + (base + (west && north ? 2 : west ? 0 : 1));
+            int corner = west && north ? 2 : west ? 0 : 1;
+            return switch (this) {
+                case FENCE -> "crafted_02_" + new int[]{110, 109, 111}[corner];
+                case RAILING -> "fencing_01_" + new int[]{2, 1, 3}[corner];
+                default -> sheet + "_" + (base + corner);
+            };
         }
 
         /** A window's or door's frame in the wall, as a tile (buildings only). */
         String frame(boolean west, boolean door) {
             return sheet + "_" + (base + (door ? 10 : 8) + (west ? 0 : 1));
         }
+
+        /** A single gate in it, as a tile: iron in a railing, else wooden. */
+        String gate(boolean west) {
+            return "fixtures_doors_fences_01_" + (this == RAILING ? (west ? 0 : 1) : (west ? 4 : 5));
+        }
+
+        /** One of the four pieces (1 to 4) of a double gate in it, as a tile: iron in a railing, else wooden. */
+        String doubleGate(boolean west, int piece) {
+            int[] pieces = this == RAILING
+                ? (west ? new int[]{40, 41, 32, 33} : new int[]{34, 35, 42, 43})
+                : (west ? new int[]{56, 57, 48, 49} : new int[]{50, 51, 58, 59});
+            return "fixtures_doors_fences_01_" + pieces[piece - 1];
+        }
     }
 
-    /** What's in an edge's gap. */
+    /** What's in a square's edge: nothing, a door, a window, a gate, or a double gate's piece 1 to 4 ({@link #DOUBLE_GATE} plus the piece less one). */
     static final int NONE = 0;
     static final int DOOR = 1;
     static final int WINDOW = 2;
     static final int GATE = 3;
+    static final int DOUBLE_GATE = 4;
 
     /** Zomboid's tiles for the things standing on tiles. */
     private static final int[] TREES = {8, 9, 10, 11, 13, 14, 15, 17, 24, 25};
@@ -87,54 +115,92 @@ final class GielinorObjects {
     private static final int[] BOULDERS = {16, 17, 18, 19, 20, 21, 22, 23};
     private static final int[] STONES = {8, 9, 10, 11, 12, 13, 14, 15};
 
+    /** The floors of the game's world, as Zomboid's levels: the ground and three above. */
+    static final int LEVELS = 4;
+
     /**
-     * Everything placed, by Zomboid square (as {@link GielinorMap.GroundGrid}
-     * lays the world out): each square's west and north edge (a style's
-     * ordinal plus one, and what's in its gap) and what stands on it (a
-     * tile, by its place in {@link #tiles}).
+     * Everything placed on one level, by Zomboid square (as
+     * {@link GielinorMap.GroundGrid} lays the world out): each square's west
+     * and north edge (a style's ordinal plus one, and what's in its gap) and
+     * what stands on it (a tile, by its place in a list shared by all
+     * levels). Kept in blocks made as they're first written, as the levels
+     * above the ground are mostly empty.
      */
     static final class Placed {
+        private static final int BLOCK = 64;
         final int width;
         final int height;
-        final byte[] westStyle;
-        final byte[] northStyle;
-        final byte[] westGap;
-        final byte[] northGap;
-        final short[] standing;
-        final java.util.List<String> tiles = new java.util.ArrayList<>(java.util.List.of(""));
-        private final Map<String, Short> tileIndex = new HashMap<>();
+        private final int blocksX;
+        private final Block[] blocks;
+        private final List<String> tiles;
+        private final Map<String, Short> tileIndex;
 
-        Placed(int width, int height) {
+        private static final class Block {
+            final byte[] westStyle = new byte[BLOCK * BLOCK];
+            final byte[] northStyle = new byte[BLOCK * BLOCK];
+            final byte[] westGap = new byte[BLOCK * BLOCK];
+            final byte[] northGap = new byte[BLOCK * BLOCK];
+            final short[] standing = new short[BLOCK * BLOCK];
+            /** Squares left without a floor, over stairs below. */
+            final boolean[] open = new boolean[BLOCK * BLOCK];
+            /** Squares given a floor, where stairs from below come out. */
+            final boolean[] landing = new boolean[BLOCK * BLOCK];
+        }
+
+        private Placed(int width, int height, List<String> tiles, Map<String, Short> tileIndex) {
             this.width = width;
             this.height = height;
-            int n = width * height;
-            westStyle = new byte[n];
-            northStyle = new byte[n];
-            westGap = new byte[n];
-            northGap = new byte[n];
-            standing = new short[n];
+            this.blocksX = (width + BLOCK - 1) / BLOCK;
+            this.blocks = new Block[blocksX * ((height + BLOCK - 1) / BLOCK)];
+            this.tiles = tiles;
+            this.tileIndex = tileIndex;
+        }
+
+        /** {@link #LEVELS} levels sharing one list of tiles. */
+        static Placed[] levels(int width, int height) {
+            List<String> tiles = new ArrayList<>(List.of(""));
+            Map<String, Short> index = new HashMap<>();
+            Placed[] out = new Placed[LEVELS];
+            for (int z = 0; z < LEVELS; z++) {
+                out[z] = new Placed(width, height, tiles, index);
+            }
+            return out;
         }
 
         boolean inside(int x, int y) {
             return x >= 0 && y >= 0 && x < width && y < height;
         }
 
+        private Block block(int x, int y, boolean make) {
+            int i = x / BLOCK + y / BLOCK * blocksX;
+            if (blocks[i] == null && make) {
+                blocks[i] = new Block();
+            }
+            return blocks[i];
+        }
+
+        private static int at(int x, int y) {
+            return x % BLOCK + y % BLOCK * BLOCK;
+        }
+
         void edge(int x, int y, boolean west, Style style, int gap) {
             if (!inside(x, y)) {
                 return;
             }
-            int i = x + y * width;
-            (west ? westStyle : northStyle)[i] = (byte) (style == null ? 0 : style.ordinal() + 1);
-            (west ? westGap : northGap)[i] = (byte) gap;
+            Block b = block(x, y, true);
+            (west ? b.westStyle : b.northStyle)[at(x, y)] = (byte) (style == null ? 0 : style.ordinal() + 1);
+            (west ? b.westGap : b.northGap)[at(x, y)] = (byte) gap;
         }
 
         Style style(int x, int y, boolean west) {
-            int s = (west ? westStyle : northStyle)[x + y * width];
+            Block b = inside(x, y) ? block(x, y, false) : null;
+            int s = b == null ? 0 : (west ? b.westStyle : b.northStyle)[at(x, y)];
             return s == 0 ? null : Style.values()[s - 1];
         }
 
         int gap(int x, int y, boolean west) {
-            return (west ? westGap : northGap)[x + y * width];
+            Block b = inside(x, y) ? block(x, y, false) : null;
+            return b == null ? NONE : (west ? b.westGap : b.northGap)[at(x, y)];
         }
 
         void stand(int x, int y, String tile) {
@@ -145,18 +211,53 @@ final class GielinorObjects {
                 tiles.add(k);
                 return (short) (tiles.size() - 1);
             });
-            standing[x + y * width] = t;
+            block(x, y, true).standing[at(x, y)] = t;
+        }
+
+        /** Leaves a square without a floor (it's over stairs coming up from below). */
+        void open(int x, int y) {
+            if (inside(x, y)) {
+                block(x, y, true).open[at(x, y)] = true;
+            }
+        }
+
+        /** Gives a square a floor, whatever the game has there (stairs from below come out onto it). */
+        void land(int x, int y) {
+            if (inside(x, y)) {
+                block(x, y, true).landing[at(x, y)] = true;
+            }
+        }
+
+        /** Whether stairs from below come out onto a square (see {@link #land}). */
+        boolean isLanding(int x, int y) {
+            Block b = inside(x, y) ? block(x, y, false) : null;
+            return b != null && b.landing[at(x, y)];
+        }
+
+        /** Whether a square is left without a floor (see {@link #open}). */
+        boolean isOpen(int x, int y) {
+            Block b = inside(x, y) ? block(x, y, false) : null;
+            return b != null && b.open[at(x, y)];
         }
 
         /** What stands on a square, or null. */
         String standing(int x, int y) {
-            int t = standing[x + y * width];
+            Block b = inside(x, y) ? block(x, y, false) : null;
+            int t = b == null ? 0 : b.standing[at(x, y)];
             return t == 0 ? null : tiles.get(t);
         }
     }
 
-    /** What a wall object is, once worked out. */
-    private record WallKind(Style style, int gap) {
+    /** What a wall object is, once worked out: its style and whether it has a window. */
+    private record WallKind(Style style, boolean window) {
+    }
+
+    /** A wall on the map: its level, tile, shape (0 straight, 2 corner, 9 diagonal) and turn. */
+    private record Wall(int level, int x, int y, int shape, int turn, WallKind kind) {
+    }
+
+    /** A door's or gate's edge, where it closes: its level, tile and side (0 west, 1 north), the side's tile normalised as {@link #edgeKey} has it. */
+    private record Door(int level, int x, int y, boolean west, boolean gate) {
     }
 
     private final Store store;
@@ -186,65 +287,358 @@ final class GielinorObjects {
         return out;
     }
 
-    /** Places the ground level's objects of the world's surface onto `placed`, leaving water bare. */
-    void place(Placed placed, GielinorMap.GroundGrid ground) throws IOException {
+    /**
+     * Places the world's objects onto `levels`, each on the level it stands
+     * on (see {@link GielinorTerrain#level}), leaving water bare of scenery.
+     */
+    void place(Placed[] levels, GielinorMap.GroundGrid ground, GielinorTerrain terrain) throws IOException {
         RegionLoader regions = new RegionLoader(store, keys::get);
+        List<Wall> walls = new ArrayList<>();
+        List<int[]> doorObjects = new ArrayList<>();
+        List<int[]> stairs = new ArrayList<>();
         for (int sx = GielinorMap.FIRST_SQUARE_X; sx <= GielinorMap.LAST_SQUARE_X; sx++) {
             for (int sy = GielinorMap.FIRST_SQUARE_Y; sy <= GielinorMap.LAST_SQUARE_Y; sy++) {
                 if (!keys.containsKey(sx << 8 | sy)) {
                     continue;
                 }
                 LocationsDefinition locations = regions.loadLocDef(sx << 8 | sy);
-                if (locations == null) {
+                MapDefinition square = terrain.square(sx, sy);
+                if (locations == null || square == null) {
                     continue;
                 }
                 for (Location l : locations.getLocations()) {
-                    if (l.getPosition().getZ() == 0) {
-                        place(placed, ground, l, sx * 64 + l.getPosition().getX(), sy * 64 + l.getPosition().getY());
+                    int lx = l.getPosition().getX();
+                    int ly = l.getPosition().getY();
+                    int level = GielinorTerrain.level(square, l.getPosition().getZ(), lx, ly);
+                    if (level < 0 || level >= LEVELS) {
+                        continue;
+                    }
+                    int worldX = sx * 64 + lx;
+                    int worldY = sy * 64 + ly;
+                    ObjectDefinition def = objects.getObject(l.getId());
+                    if (def == null) {
+                        continue;
+                    }
+                    int type = l.getType();
+                    if (type == 0 || type == 2 || type == 9) {
+                        if (isDoor(def)) {
+                            if (type == 0) {
+                                doorObjects.add(new int[]{level, worldX, worldY, l.getOrientation() & 3, l.getId()});
+                            }
+                            continue;
+                        }
+                        WallKind kind = wallKind(def);
+                        if (kind != null) {
+                            walls.add(new Wall(level, worldX, worldY, type, l.getOrientation() & 3, kind));
+                        }
+                    } else if ((type == 10 || type == 11) && isStaircase(def)) {
+                        boolean turned = (l.getOrientation() & 1) == 1;
+                        stairs.add(new int[]{level, worldX, worldY, turned ? def.getSizeY() : def.getSizeX(), turned ? def.getSizeX() : def.getSizeY()});
+                    } else if ((type == 10 || type == 11) && level == 0) {
+                        scenery(levels[0], ground, def, l, worldX, worldY);
                     }
                 }
             }
         }
+        // The walls, and where each edge's wall is, for the doors to find their gaps.
+        Map<Long, Style> edges = new HashMap<>();
+        for (Wall w : walls) {
+            counts.merge(w.kind.window ? "windows" : w.kind.style.name().toLowerCase(Locale.ROOT), 1, Integer::sum);
+            if (w.shape == 9) {
+                diagonal(levels[w.level], w);
+                continue;
+            }
+            for (int side : w.shape == 2 ? new int[]{w.turn, (w.turn + 1) & 3} : new int[]{w.turn}) {
+                edges.put(edgeKey(w.level, w.x, w.y, side), w.kind.style);
+                side(levels[w.level], w.x, w.y, side, w.kind.style, w.kind.window ? WINDOW : NONE);
+            }
+        }
+        placeDoors(levels, doorObjects, edges);
+        placeStairs(levels, stairs);
         System.out.println("  objects: " + counts);
     }
 
-    private void place(Placed placed, GielinorMap.GroundGrid ground, Location l, int worldX, int worldY) throws IOException {
-        ObjectDefinition def = objects.getObject(l.getId());
-        if (def == null) {
-            return;
-        }
+    /** Whether an object is a staircase going up: named stairs, and climbed up. */
+    private static boolean isStaircase(ObjectDefinition def) {
+        return name(def).contains("stair") && hasOp(def, "climb-up");
+    }
+
+    /** Zomboid's wooden stairs: bottom, middle and top, going up westward and northward. */
+    private static final String[] STAIRS_WEST = {"carpentry_02_88", "carpentry_02_89", "carpentry_02_90"};
+    private static final String[] STAIRS_NORTH = {"carpentry_02_96", "carpentry_02_97", "carpentry_02_98"};
+
+    /**
+     * Places the staircases as Zomboid's stairs: a run of three squares (its
+     * bottom, middle and top) up to the level above, westward along a
+     * staircase wider than it's deep, else northward, at the far end of it so
+     * the run's top comes out still within it: up to two runs side by side,
+     * in one half of it on even levels and the other on odd ones (see
+     * below). The squares above the stairs are left without a floor, as
+     * Zomboid's own buildings have them. A staircase too small
+     * for a run (a tile across, as the game's spiral stairs in narrow towers
+     * can be) is left out.
+     */
+    private void placeStairs(Placed[] levels, List<int[]> stairs) {
         int scale = GielinorMap.SCALE;
-        // The tile's top-left Zomboid square (the game's y runs north, Zomboid's south).
+        for (int[] st : stairs) {
+            int level = st[0];
+            if (level + 1 >= LEVELS) {
+                continue;
+            }
+            Placed here = levels[level];
+            Placed above = levels[level + 1];
+            int width = st[3] * scale;
+            int depth = st[4] * scale;
+            int x0 = (st[1] - GielinorMap.FIRST_SQUARE_X * 64) * scale;
+            // The footprint's northern row (the game's tiles run north as y grows).
+            int y0 = here.height - (st[2] + st[4] - GielinorMap.FIRST_SQUARE_Y * 64) * scale;
+            boolean west = width >= depth;
+            int length = west ? width : depth;
+            int across = west ? depth : width;
+            if (length < 4) {
+                counts.merge("stairs too small", 1, Integer::sum);
+                continue;
+            }
+            counts.merge("stairs", 1, Integer::sum);
+            // Stairs over stairs take the other half of the stairwell, by the
+            // level's evenness, so a floor's stairs up don't stand in the hole
+            // the stairs from below come up through.
+            int half = across / 2;
+            int first = level % 2 == 0 ? Math.max(0, half - 2) : half;
+            int last = level % 2 == 0 ? half - 1 : Math.min(across - 1, half + 1);
+            for (int lane = first; lane <= last; lane++) {
+                for (int k = 0; k < 3; k++) {
+                    // Bottom at the footprint's far (east or south) end, top two squares in.
+                    int along = length - 1 - k;
+                    int x = west ? x0 + along : x0 + lane;
+                    int y = west ? y0 + lane : y0 + along;
+                    here.stand(x, y, (west ? STAIRS_WEST : STAIRS_NORTH)[k]);
+                    above.open(x, y);
+                }
+                // Where the run's top comes out, a floor (the game's can stop short under its spiral stairs).
+                int out = length - 4;
+                above.land(west ? x0 + out : x0 + lane, west ? y0 + lane : y0 + out);
+            }
+        }
+    }
+
+    /** Whether an object is a door or a gate: it opens or closes, or says it's one. */
+    private static boolean isDoor(ObjectDefinition def) {
+        String name = name(def);
+        return opens(def) || closes(def) || name.contains("door") || name.contains("gate");
+    }
+
+    private static String name(ObjectDefinition def) {
+        return def.getName() == null ? "" : def.getName().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean opens(ObjectDefinition def) {
+        return hasOp(def, "open");
+    }
+
+    private static boolean closes(ObjectDefinition def) {
+        return hasOp(def, "close");
+    }
+
+    private static boolean hasOp(ObjectDefinition def, String op) {
+        EntityOpsDefinition ops = def.getOps();
+        if (ops == null || ops.getOps() == null) {
+            return false;
+        }
+        for (EntityOpsDefinition.Op o : ops.getOps()) {
+            if (o != null && o.text != null && o.text.toLowerCase(Locale.ROOT).equals(op)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * An edge's key: its level, and the tile and side (west or north) it's
+     * on, an east side taken as the west side of the tile east of it and a
+     * south side as the north side of the tile south of it.
+     */
+    private static long edgeKey(int level, int x, int y, int side) {
+        int ex = side == 2 ? x + 1 : x;
+        int ey = side == 3 ? y - 1 : y;
+        boolean west = side == 0 || side == 2;
+        return ((long) level << 40) | ((long) ex << 22) | ((long) ey << 2) | (west ? 0 : 1);
+    }
+
+    private static long edgeKey(Door d) {
+        return edgeKey(d.level, d.x, d.y, d.west ? 0 : 1);
+    }
+
+    /** The edge along the line from `d` (`step` tiles on, either way). */
+    private static long along(Door d, int step) {
+        return edgeKey(d.level, d.west ? d.x : d.x + step, d.west ? d.y + step : d.y, d.west ? 0 : 1);
+    }
+
+    /**
+     * Places the doors and gates: each in its doorway (see the class
+     * comment), side by side ones as double doors, a door in a building's
+     * wall as a door, anything else as a gate.
+     */
+    private void placeDoors(Placed[] levels, List<int[]> doorObjects, Map<Long, Style> edges) {
+        Map<Long, Door> doors = new java.util.LinkedHashMap<>();
+        for (int[] o : doorObjects) {
+            ObjectDefinition def = objects.getObject(o[4]);
+            int level = o[0];
+            int x = o[1];
+            int y = o[2];
+            int turn = o[3];
+            List<int[]> candidates = new ArrayList<>();
+            if (closes(def) && !opens(def)) {
+                // Stored open: back into the doorway it swung out of.
+                boolean flip = def.isRotated();
+                int[] single = {0, 1, 0, -1};
+                int[] singleY = {1, 0, -1, 0};
+                candidates.add(new int[]{x + single[turn], y + singleY[turn], (turn + (flip ? 1 : 3)) & 3});
+                int[] pairX = flip ? new int[]{0, 1, 0, -1} : new int[]{0, -1, 0, 1};
+                int[] pairY = flip ? new int[]{-1, 0, 1, 0} : new int[]{1, 0, -1, 0};
+                candidates.add(new int[]{x + pairX[turn], y + pairY[turn], (turn + (flip ? 3 : 1)) & 3});
+            } else {
+                candidates.add(new int[]{x, y, turn});
+            }
+            int[] best = null;
+            int bestScore = Integer.MIN_VALUE;
+            for (int[] c : candidates) {
+                long key = edgeKey(level, c[0], c[1], c[2]);
+                Door probe = door(level, c[0], c[1], c[2], false);
+                int score = (edges.containsKey(key) ? -4 : 0) + (edges.containsKey(along(probe, 1)) ? 1 : 0)
+                    + (edges.containsKey(along(probe, -1)) ? 1 : 0);
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = c;
+                }
+            }
+            Door d = door(level, best[0], best[1], best[2], name(def).contains("gate"));
+            doors.putIfAbsent(edgeKey(d), d);
+        }
+        java.util.Set<Long> done = new java.util.HashSet<>();
+        for (Door d : doors.values()) {
+            long key = edgeKey(d);
+            if (done.contains(key)) {
+                continue;
+            }
+            done.add(key);
+            // Its partner, if it's half of a double door: the next tile along the line.
+            Door partner = null;
+            for (int step : new int[]{1, -1}) {
+                Door next = doors.get(along(d, step));
+                if (partner == null && next != null && !done.contains(edgeKey(next))) {
+                    partner = next;
+                }
+            }
+            Style frame = frame(edges, d, partner);
+            boolean gate = d.gate || !frame.building();
+            Placed placed = levels[d.level];
+            if (partner != null) {
+                done.add(edgeKey(partner));
+                Door first = d.west ? (d.y < partner.y ? d : partner) : (d.x < partner.x ? d : partner);
+                counts.merge(gate ? "double gates" : "double doors", 1, Integer::sum);
+                // Four squares along the edge: a double gate's pieces, or a wall, two doors and a wall.
+                for (int i = 0; i < 4; i++) {
+                    int[] sq = square(placed, first, i);
+                    int gap = gate ? DOUBLE_GATE + i : i == 1 || i == 2 ? DOOR : NONE;
+                    placed.edge(sq[0], sq[1], first.west, frame, gap);
+                }
+            } else {
+                counts.merge(gate ? "gates" : "doors", 1, Integer::sum);
+                for (int i = 0; i < 2; i++) {
+                    int[] sq = square(placed, d, i);
+                    placed.edge(sq[0], sq[1], d.west, frame, i == 0 ? (gate ? GATE : DOOR) : NONE);
+                }
+            }
+        }
+    }
+
+    /** A door on side `side` (0 to 3) of a tile, normalised to a west or north side. */
+    private static Door door(int level, int x, int y, int side, boolean gate) {
+        return new Door(level, side == 2 ? x + 1 : x, side == 3 ? y - 1 : y, side == 0 || side == 2, gate);
+    }
+
+    /**
+     * The `i`th Zomboid square along a door's edge (and the next tile's, for
+     * a double door): for a west edge from south to north, as Zomboid counts
+     * a west double gate's pieces; for a north edge from west to east.
+     */
+    private static int[] square(Placed placed, Door d, int i) {
+        int scale = GielinorMap.SCALE;
+        int zx = (d.x - GielinorMap.FIRST_SQUARE_X * 64) * scale;
+        int zy = placed.height - (d.y - GielinorMap.FIRST_SQUARE_Y * 64 + 1) * scale;
+        // A west edge's squares run south (larger y) to north; the tile's southern square is zy + 1.
+        return d.west ? new int[]{zx, zy + scale - 1 - i} : new int[]{zx + i, zy};
+    }
+
+    /** The wall a door stands in: the nearest wall along its line, either way (a building's first), else wood. */
+    private static Style frame(Map<Long, Style> edges, Door d, Door partner) {
+        Style found = null;
+        for (int step = 1; step <= 3 && found == null; step++) {
+            for (int dir : new int[]{1, -1}) {
+                Door from = partner != null && Integer.signum(partner.west ? partner.y - d.y : partner.x - d.x) == dir ? partner : d;
+                Style s = edges.get(along(from, dir * step));
+                if (s != null && (found == null || s.building() && !found.building())) {
+                    found = s;
+                }
+            }
+        }
+        return found != null ? found : Style.WOOD;
+    }
+
+    /**
+     * A straight wall along one side of a tile: the game's sides are 0 west,
+     * 1 north, 2 east, 3 south, and a tile is two squares a side.
+     */
+    private static void side(Placed placed, int worldX, int worldY, int side, Style style, int gap) {
+        int scale = GielinorMap.SCALE;
         int x = (worldX - GielinorMap.FIRST_SQUARE_X * 64) * scale;
         int y = placed.height - (worldY - GielinorMap.FIRST_SQUARE_Y * 64 + 1) * scale;
-        int type = l.getType();
-        int turn = l.getOrientation() & 3;
-        if (type == 0 || type == 2 || type == 9) {
-            WallKind kind = wallKind(def);
-            if (kind == null) {
-                return;
+        for (int i = 0; i < scale; i++) {
+            switch (side) {
+                case 0 -> placed.edge(x, y + i, true, style, gap);
+                case 1 -> placed.edge(x + i, y, false, style, gap);
+                case 2 -> placed.edge(x + scale, y + i, true, style, gap);
+                default -> placed.edge(x + i, y + scale, false, style, gap);
             }
-            counts.merge(kind.gap == DOOR ? "doors" : kind.gap == GATE ? "gates" : kind.gap == WINDOW ? "windows"
-                : kind.style.name().toLowerCase(Locale.ROOT), 1, Integer::sum);
-            if (type == 0) {
-                side(placed, x, y, turn, kind);
-            } else if (type == 2) {
-                side(placed, x, y, turn, kind);
-                side(placed, x, y, (turn + 1) & 3, kind);
-            } else {
-                diagonal(placed, x, y, turn, kind);
-            }
-            return;
         }
-        if (type != 10 && type != 11) {
-            return;
+    }
+
+    /**
+     * A wall across a tile, from corner to corner: Zomboid has no slanted
+     * walls, so it steps across the tile's squares. Turned 0 or 2 it runs
+     * from the tile's south-west corner to its north-east, else from its
+     * north-west to its south-east.
+     */
+    private static void diagonal(Placed placed, Wall w) {
+        int scale = GielinorMap.SCALE;
+        int x = (w.x - GielinorMap.FIRST_SQUARE_X * 64) * scale;
+        int y = placed.height - (w.y - GielinorMap.FIRST_SQUARE_Y * 64 + 1) * scale;
+        Style s = w.kind.style;
+        if (w.turn % 2 == 0) {
+            placed.edge(x, y + 1, true, s, NONE);
+            placed.edge(x, y + 1, false, s, NONE);
+            placed.edge(x + 1, y, true, s, NONE);
+            placed.edge(x + 1, y, false, s, NONE);
+        } else {
+            placed.edge(x, y, false, s, NONE);
+            placed.edge(x + 1, y, true, s, NONE);
+            placed.edge(x + 1, y + 1, false, s, NONE);
+            placed.edge(x + 2, y + 1, true, s, NONE);
         }
+    }
+
+    /** A tree, bush, plant or rock on the ground, one for each of the game's tiles it covers, somewhere on that tile. */
+    private void scenery(Placed placed, GielinorMap.GroundGrid ground, ObjectDefinition def, Location l, int worldX, int worldY) {
         String[] choices = standingChoices(def);
         if (choices == null) {
             return;
         }
         counts.merge(choices[0], 1, Integer::sum);
-        // One for each of the game's tiles it covers, somewhere on that tile.
+        int scale = GielinorMap.SCALE;
+        int x = (worldX - GielinorMap.FIRST_SQUARE_X * 64) * scale;
+        int y = placed.height - (worldY - GielinorMap.FIRST_SQUARE_Y * 64 + 1) * scale;
+        int turn = l.getOrientation() & 3;
         int w = turn % 2 == 0 ? def.getSizeX() : def.getSizeY();
         int h = turn % 2 == 0 ? def.getSizeY() : def.getSizeX();
         for (int tx = 0; tx < w; tx++) {
@@ -263,51 +657,11 @@ final class GielinorObjects {
     }
 
     /**
-     * A straight wall along one side of the tile whose top-left square is
-     * (x, y): the game's sides are 0 west, 1 north, 2 east, 3 south. A
-     * tile is two squares a side; a door or gate takes the first of them,
-     * the second its wall.
-     */
-    private static void side(Placed placed, int x, int y, int side, WallKind kind) {
-        int scale = GielinorMap.SCALE;
-        for (int i = 0; i < scale; i++) {
-            int gap = kind.gap == WINDOW || i == 0 ? kind.gap : NONE;
-            switch (side) {
-                case 0 -> placed.edge(x, y + i, true, kind.style, gap);
-                case 1 -> placed.edge(x + i, y, false, kind.style, gap);
-                case 2 -> placed.edge(x + scale, y + i, true, kind.style, gap);
-                default -> placed.edge(x + i, y + scale, false, kind.style, gap);
-            }
-        }
-    }
-
-    /**
-     * A wall across the tile, from corner to corner: Zomboid has no slanted
-     * walls, so it steps across the tile's squares. Turned 0 or 2 it runs
-     * from the tile's south-west corner to its north-east, else from its
-     * north-west to its south-east.
-     */
-    private static void diagonal(Placed placed, int x, int y, int turn, WallKind kind) {
-        Style s = kind.style;
-        if (turn % 2 == 0) {
-            placed.edge(x, y + 1, true, s, NONE);
-            placed.edge(x, y + 1, false, s, NONE);
-            placed.edge(x + 1, y, true, s, NONE);
-            placed.edge(x + 1, y, false, s, NONE);
-        } else {
-            placed.edge(x, y, false, s, NONE);
-            placed.edge(x + 1, y, true, s, NONE);
-            placed.edge(x + 1, y + 1, false, s, NONE);
-            placed.edge(x + 2, y + 1, true, s, NONE);
-        }
-    }
-
-    /**
      * What a scenery object becomes, by its name: a kind (for the counts)
      * then the tiles to choose from, or null for nothing.
      */
     private static String[] standingChoices(ObjectDefinition def) {
-        String name = def.getName() == null ? "" : def.getName().toLowerCase(Locale.ROOT);
+        String name = name(def);
         if (name.isEmpty() || name.equals("null")) {
             return null;
         }
@@ -354,72 +708,66 @@ final class GielinorObjects {
         if (def.getInteractType() == 0) {
             return null;
         }
-        String name = def.getName() == null ? "" : def.getName().toLowerCase(Locale.ROOT);
-        boolean opens = false;
-        if (def.getOps() != null) {
-            String ops = String.valueOf(def.getOps()).toLowerCase(Locale.ROOT);
-            opens = ops.contains("open");
-        }
-        Mesh mesh = wallMesh(def);
-        if (mesh.faces.isEmpty() && !opens) {
+        Mesh mesh = models.objectMesh(def, 0);
+        if (mesh.faces.isEmpty()) {
             return null;
         }
         double top = 0;
         for (double[] v : mesh.vertices) {
             top = Math.max(top, -v[1]);
         }
+        if (top < 8) {
+            return null;
+        }
+        String colour = colourName(averageColour(mesh));
+        if (def.isBlocksProjectile() && top >= LOW && window(mesh, top)) {
+            // A building's wall with a window: big windows leave it more gap than wall.
+            return new WallKind(buildingStyle(colour), true);
+        }
+        double solid = covered(mesh, top, 0.05, 0.95);
         double[] rgb = averageColour(mesh);
-        String colour = colourName(rgb);
-        boolean low = top < 170;
-        if (opens || name.contains("door") || name.contains("gate")) {
-            boolean gate = name.contains("gate") && !name.contains("city") || low;
-            return new WallKind(gate ? Style.FENCE : null, gate ? GATE : DOOR);
-        }
-        if (low) {
-            boolean wooden = colour.equals("brown") || colour.equals("tan") || colour.equals("green");
-            if (wooden) {
-                return new WallKind(Style.FENCE, NONE);
+        double chroma = (Math.max(rgb[0], Math.max(rgb[1], rgb[2])) - Math.min(rgb[0], Math.min(rgb[1], rgb[2]))) / 255;
+        // The game's wood is warm and strongly coloured; its stone and iron are near grey.
+        boolean wooden = chroma >= 0.2 && rgb[0] > rgb[2];
+        if (!def.isBlocksProjectile() || solid < SOLID) {
+            // Arrows fly over it, or it's mostly gaps: a fence, a hedge, a
+            // dry stone wall or an iron railing.
+            if (wooden || colour.equals("green")) {
+                return new WallKind(Style.FENCE, false);
             }
-            return new WallKind(def.isBlocksProjectile() ? Style.LOW_WALL : Style.RAILING, NONE);
+            return new WallKind(solid >= STONE_SOLID ? Style.LOW_WALL : Style.RAILING, false);
         }
-        Style style = switch (colour) {
+        if (top < LOW) {
+            return new WallKind(Style.LOW_WALL, false);
+        }
+        return new WallKind(buildingStyle(colour), window(mesh, top));
+    }
+
+    /** How much of a wall's face must be covered for it to be a wall rather than a fence. */
+    private static final double SOLID = 0.6;
+    /** A stone wall that arrows fly over (a dry stone wall's uneven top) is at least this solid; an iron railing less. */
+    private static final double STONE_SOLID = 0.4;
+    /** A wall lower than this (in the game's units, a tile being 128 across) is a low wall. */
+    private static final double LOW = 120;
+
+    private static Style buildingStyle(String colour) {
+        return switch (colour) {
             case "white", "beige" -> Style.PLASTER;
             case "red" -> Style.BRICK;
-            case "brown" -> Style.LOGS;
+            case "brown", "green" -> Style.WOOD;
             case "tan" -> Style.STONE;
             default -> Style.GREY_STONE;
         };
-        return new WallKind(style, window(mesh, top) ? WINDOW : NONE);
     }
 
-    /** A wall object's models, as one mesh in the game's units (y down). */
-    private Mesh wallMesh(ObjectDefinition def) throws IOException {
-        Mesh mesh = new Mesh();
-        int[] ids = def.getObjectModels();
-        int[] types = def.getObjectTypes();
-        if (ids == null) {
-            return mesh;
-        }
-        for (int i = 0; i < ids.length; i++) {
-            // Of a model for each shape, the straight wall's (shape 0), or else the first.
-            if (types != null && types.length == ids.length && types[i] != 0 && i > 0) {
-                continue;
-            }
-            Mesh part = models.rawMesh(models.load(ids[i]), null);
-            int base = mesh.vertices.size();
-            mesh.vertices.addAll(part.vertices);
-            for (int[] f : part.faces) {
-                mesh.faces.add(new int[]{f[0] + base, f[1] + base, f[2] + base});
-            }
-            mesh.colours.addAll(part.colours);
-        }
-        return mesh;
-    }
-
+    /** The average colour of a wall's faces that face sideways (its sides, not its top), weighted by their area. */
     private static double[] averageColour(Mesh mesh) {
         double[] rgb = new double[3];
         double total = 0;
         for (int i = 0; i < mesh.faces.size(); i++) {
+            if (Math.abs(mesh.normal(i)[1]) > 0.7) {
+                continue;
+            }
             int[] f = mesh.faces.get(i);
             double[] n = ModelExporter.cross(ModelExporter.sub(mesh.vertices.get(f[1]), mesh.vertices.get(f[0])),
                 ModelExporter.sub(mesh.vertices.get(f[2]), mesh.vertices.get(f[0])));
@@ -459,24 +807,33 @@ final class GielinorObjects {
 
     /**
      * Whether a wall's face has a window: an opening halfway up, across the
-     * middle of the wall, with wall below it. The game's straight walls stand
-     * along the west side of their tile, so their face lies across z and y.
+     * middle of the wall, with wall below and above it.
      */
     private static boolean window(Mesh mesh, double top) {
-        int open = 0;
-        int footed = 0;
-        for (double z = -40; z <= 40; z += 10) {
-            if (!covered(mesh, z, -top * 0.5)) {
-                open++;
-            }
-            if (covered(mesh, z, -top * 0.1)) {
-                footed++;
-            }
-        }
-        return open >= 3 && footed >= 6;
+        return covered(mesh, top, 0.4, 0.6) < 0.7 && covered(mesh, top, 0.03, 0.15) > 0.85 && covered(mesh, top, 0.88, 0.97) > 0.6;
     }
 
-    private static boolean covered(Mesh mesh, double z, double y) {
+    /**
+     * How much of a band of a straight wall's face (from `from` to `to` of
+     * its height) its faces cover. The game's straight walls stand along the
+     * west side of their tile, so their face lies across z (from -64 to 64)
+     * and y.
+     */
+    private static double covered(Mesh mesh, double top, double from, double to) {
+        int hit = 0;
+        int all = 0;
+        for (double z = -56; z <= 56; z += 8) {
+            for (double t = from; t <= to + 1e-9; t += (to - from) / 6) {
+                all++;
+                if (covers(mesh, z, -top * t)) {
+                    hit++;
+                }
+            }
+        }
+        return (double) hit / all;
+    }
+
+    private static boolean covers(Mesh mesh, double z, double y) {
         for (int[] f : mesh.faces) {
             double[] a = mesh.vertices.get(f[0]);
             double[] b = mesh.vertices.get(f[1]);

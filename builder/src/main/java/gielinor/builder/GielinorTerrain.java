@@ -31,7 +31,9 @@ final class GielinorTerrain {
         DIRT_GRASS("blends_natural_01", "Dirt_Grass"),
         GRASS_DARK("blends_natural_01", "Grass_Dark"),
         GRASS_MEDIUM("blends_natural_01", "Grass_Medium"),
-        GRASS_LIGHT("blends_natural_01", "Grass_Light");
+        GRASS_LIGHT("blends_natural_01", "Grass_Light"),
+        /** A bridge's or jetty's deck over water, which the game draws as an object (laid as planks; the dirt tiles stand in where a material's asked). */
+        DECK("blends_natural_01", "Dirt");
 
         final String sheet;
         final String material;
@@ -77,6 +79,43 @@ final class GielinorTerrain {
         return (tile.getSettings() & 4) != 0;
     }
 
+    /**
+     * The level something on plane `plane` of a map square stands on, at
+     * the square's tile (x, y): the game draws a tile whose plane above is
+     * marked as a bridge (the 2 bit of that tile's settings) a level down,
+     * its bridge (or upper storey) at ground level and what's under it below
+     * the ground, which Zomboid has no room for (-1).
+     */
+    static int level(MapDefinition square, int plane, int x, int y) {
+        return bridge(square, x, y) ? plane - 1 : plane;
+    }
+
+    /** Whether the game draws a square's tile (x, y) a level down (see {@link #level}). */
+    static boolean bridge(MapDefinition square, int x, int y) {
+        return (square.getTiles()[1][x][y].getSettings() & 2) != 0;
+    }
+
+    /** The tile of a square at (x, y) that's on Zomboid's level `level` (see {@link #level}), or null for none. */
+    static MapDefinition.Tile tile(MapDefinition square, int level, int x, int y) {
+        int plane = bridge(square, x, y) ? level + 1 : level;
+        return plane < 4 ? square.getTiles()[plane][x][y] : null;
+    }
+
+    /**
+     * The ground on Zomboid's ground level at a square's tile (x, y): its
+     * tile's (see {@link #tile}), or, where that's a bridge's level with no
+     * ground of its own (its deck is an object the game draws over it), the
+     * ground under the bridge, or a deck where that's water.
+     */
+    Ground groundLevel(MapDefinition square, int x, int y) {
+        Ground g = ground(tile(square, 0, x, y));
+        if (g == null && bridge(square, x, y)) {
+            Ground under = ground(square.getTiles()[0][x][y]);
+            return under == null || under == Ground.WATER ? Ground.DECK : under;
+        }
+        return g;
+    }
+
     /** The kind of ground a tile is, or null for none (a gap in the world). */
     Ground ground(MapDefinition.Tile tile) {
         int underlay = tile.getUnderlayId() & 0xffff;
@@ -84,7 +123,8 @@ final class GielinorTerrain {
         if (overlay > 0) {
             OverlayDefinition def = overlays.provide(overlay - 1);
             if (def != null && def.getTexture() >= 0) {
-                return byColour(textures.getAverageTextureRGB(def.getTexture()), true);
+                // The texture's average colour, which comes packed as HSL.
+                return byColour(ModelExporter.rgb(textures.getAverageTextureRGB(def.getTexture())), true);
             }
             if (def != null && def.getRgbColor() != SEE_THROUGH) {
                 return byColour(def.getRgbColor(), false);
@@ -108,10 +148,10 @@ final class GielinorTerrain {
         double min = Math.min(r, Math.min(g, b));
         double lightness = (max + min) / 2;
         double chroma = max - min;
-        // Water is a bright, strongly coloured bluish texture; the dark
-        // textures, and plain blues (carpets and the like), are floors.
+        // The game's water textures (seas, rivers, swamps) are all bluer than
+        // they are red; its other textures (lava, mud, stone floors) aren't.
         if (textured) {
-            return b > r && chroma > 0.4 && lightness > 0.2 ? Ground.WATER : Ground.STONE;
+            return b - r > 0.08 ? Ground.WATER : Ground.STONE;
         }
         if (chroma < 0.08 || b > r + 0.1 && b > g) {
             return Ground.STONE;

@@ -79,6 +79,54 @@ final class ModelExporter {
         return loader.load(id, archive.decompress(store.getStorage().loadArchive(archive)));
     }
 
+    /**
+     * A map object's model for one shape it's placed as (0 a straight wall,
+     * 2 a wall's corner, 9 a diagonal wall, 10 scenery: an object has a
+     * model for each shape it comes in, or one for all when it lists none),
+     * recoloured and retextured as the object asks, as a mesh in the game's
+     * units (y down). Falls back to its first model if it has none for the
+     * shape.
+     */
+    Mesh objectMesh(net.runelite.cache.definitions.ObjectDefinition def, int shape) throws IOException {
+        Mesh mesh = new Mesh();
+        int[] ids = def.getObjectModels();
+        if (ids == null) {
+            return mesh;
+        }
+        int[] shapes = def.getObjectTypes();
+        boolean any = shapes == null;
+        if (shapes != null) {
+            for (int s : shapes) {
+                any |= s == shape;
+            }
+        }
+        for (int i = 0; i < ids.length; i++) {
+            boolean wanted = shapes == null || (any ? shapes[i] == shape : i == 0);
+            ModelDefinition model = wanted ? load(ids[i]) : null;
+            if (model == null) {
+                continue;
+            }
+            short[] find = def.getRecolorToFind();
+            short[] replace = def.getRecolorToReplace();
+            for (int k = 0; find != null && replace != null && k < find.length; k++) {
+                model.recolor(find[k], replace[k]);
+            }
+            short[] textureFind = def.getRetextureToFind();
+            short[] textureReplace = def.getTextureToReplace();
+            for (int k = 0; textureFind != null && textureReplace != null && k < textureFind.length; k++) {
+                model.retexture(textureFind[k], textureReplace[k]);
+            }
+            Mesh part = rawMesh(model, null);
+            int base = mesh.vertices.size();
+            mesh.vertices.addAll(part.vertices);
+            for (int[] f : part.faces) {
+                mesh.faces.add(new int[]{f[0] + base, f[1] + base, f[2] + base});
+            }
+            mesh.colours.addAll(part.colours);
+        }
+        return mesh;
+    }
+
     /** Every identity kit a player can choose when designing their character, lowest id first. */
     List<KitDefinition> selectableKits() throws IOException {
         Index configs = store.getIndex(IndexType.CONFIGS);
@@ -164,7 +212,8 @@ final class ModelExporter {
                 continue;
             }
             int texture = model.faceTextures == null ? -1 : model.faceTextures[i];
-            int rgb = texture >= 0 ? textures.getAverageTextureRGB(texture) : JagexColor.HSLtoRGB(model.faceColors[i], BRIGHTNESS);
+            // A texture's average colour comes packed as HSL, as faces' colours are.
+            int rgb = texture >= 0 ? rgb(textures.getAverageTextureRGB(texture)) : JagexColor.HSLtoRGB(model.faceColors[i], BRIGHTNESS);
             mesh.faces.add(new int[]{model.faceIndices1[i], model.faceIndices2[i], model.faceIndices3[i]});
             mesh.colours.add(rgb);
             mesh.sourceColours.add(model.faceColors[i] & 0xffff);

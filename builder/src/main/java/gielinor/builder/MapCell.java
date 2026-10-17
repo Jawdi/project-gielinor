@@ -42,6 +42,8 @@ final class MapCell {
     static final int CHUNKS = SIZE / CHUNK;
 
     static final int BIT_SOLID = 1;
+    static final int BIT_WALL_NORTH = 2;
+    static final int BIT_WALL_WEST = 4;
     static final int BIT_WATER = 8;
 
     final int cellX;

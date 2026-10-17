@@ -89,7 +89,8 @@ public final class Main {
             writePack(out.toPath(), built, icons, itemModels, npcs, scripts, zomboid);
             // Zomboid finds a mod's maps in its common folder (and only looks in
             // the version folder if the common one has maps too).
-            GielinorMap.write(out.toPath().resolve("common/media"), TileDefinitions.read(zomboid.toPath()), new GielinorTerrain(store));
+            GielinorMap.write(out.toPath().resolve("common/media"), TileDefinitions.read(zomboid.toPath()), new GielinorTerrain(store),
+                new GielinorObjects(store, Pinned.keys()));
         }
     }
 

@@ -87,7 +87,7 @@ final class GielinorMap {
      * the world's ground is read first, then each cell is made and written
      * in turn, so only one is ever held.
      */
-    static void write(Path media, TileDefinitions tiles, GielinorTerrain terrain) throws IOException {
+    static void write(Path media, TileDefinitions tiles, GielinorTerrain terrain, GielinorObjects objects) throws IOException {
         Path dir = media.resolve("maps").resolve(FOLDER);
         // Cells from an earlier build mustn't linger.
         deleteTree(dir);
@@ -121,6 +121,8 @@ final class GielinorMap {
         }
         int width = ground.width;
         int height = ground.height;
+        GielinorObjects.Placed placed = new GielinorObjects.Placed(width, height);
+        objects.place(placed, ground);
         int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
         int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
         int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
@@ -138,10 +140,12 @@ final class GielinorMap {
                         }
                         List<String> choices = floors.get(g);
                         // The same square always gets the same of the material's tiles.
-                        cell.set(x, y, choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
-                        if (g == GielinorTerrain.Ground.WATER) {
-                            cell.setBits(x, y, MapCell.BIT_WATER);
-                        }
+                        List<String> square = new java.util.ArrayList<>();
+                        square.add(choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
+                        int bits = g == GielinorTerrain.Ground.WATER ? MapCell.BIT_WATER : 0;
+                        bits |= standing(placed, zx, zy, square, g != GielinorTerrain.Ground.WATER);
+                        cell.set(x, y, square.toArray(new String[0]));
+                        cell.setBits(x, y, bits);
                     }
                 }
                 // Zombies everywhere but on water and around where characters start.
@@ -174,8 +178,86 @@ final class GielinorMap {
         System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts);
     }
 
+    /**
+     * Adds what stands on a square to its tiles (after its floor): its west
+     * and north walls (or the corner of both), any door, gate or window in
+     * them, then any tree, bush, plant or rock (not on water). Returns the
+     * square's pathfinding bits for them: its walls (not doors or gates, which
+     * open) and solid rocks.
+     */
+    private static int standing(GielinorObjects.Placed placed, int x, int y, List<String> tiles, boolean dry) {
+        GielinorObjects.Style west = placed.style(x, y, true);
+        GielinorObjects.Style north = placed.style(x, y, false);
+        int westGap = placed.gap(x, y, true);
+        int northGap = placed.gap(x, y, false);
+        if (west == null && westGap == GielinorObjects.DOOR) {
+            west = doorFrame(placed, x, y, true);
+        }
+        if (north == null && northGap == GielinorObjects.DOOR) {
+            north = doorFrame(placed, x, y, false);
+        }
+        int bits = 0;
+        if (west != null && west == north && westGap == GielinorObjects.NONE && northGap == GielinorObjects.NONE) {
+            tiles.add(west.wall(true, true));
+        } else {
+            if (west != null) {
+                edgeTiles(tiles, west, westGap, true);
+            }
+            if (north != null) {
+                edgeTiles(tiles, north, northGap, false);
+            }
+        }
+        if (west != null && westGap != GielinorObjects.DOOR && westGap != GielinorObjects.GATE) {
+            bits |= MapCell.BIT_WALL_WEST;
+        }
+        if (north != null && northGap != GielinorObjects.DOOR && northGap != GielinorObjects.GATE) {
+            bits |= MapCell.BIT_WALL_NORTH;
+        }
+        String thing = placed.standing(x, y);
+        if (thing != null && dry) {
+            tiles.add(thing);
+            if (thing.startsWith("boulders_") && Integer.parseInt(thing.substring("boulders_".length())) >= 16) {
+                bits |= MapCell.BIT_SOLID;
+            }
+        }
+        return bits;
+    }
+
+    /** A wall's tiles along one edge: the wall, or its frame and what's in it. */
+    private static void edgeTiles(List<String> tiles, GielinorObjects.Style style, int gap, boolean west) {
+        boolean building = style.building();
+        if (gap == GielinorObjects.GATE || gap == GielinorObjects.DOOR && !building) {
+            tiles.add(west ? "fixtures_doors_fences_01_4" : "fixtures_doors_fences_01_5");
+        } else if (gap == GielinorObjects.DOOR) {
+            tiles.add(style.frame(west, true));
+            tiles.add(west ? "fixtures_doors_01_8" : "fixtures_doors_01_9");
+        } else if (gap == GielinorObjects.WINDOW && building) {
+            tiles.add(style.frame(west, false));
+            tiles.add(west ? "fixtures_windows_01_0" : "fixtures_windows_01_1");
+        } else {
+            tiles.add(style.wall(west, !west));
+        }
+    }
+
+    /** The wall a door stands in: the nearest building wall along its line, else logs. */
+    private static GielinorObjects.Style doorFrame(GielinorObjects.Placed placed, int x, int y, boolean west) {
+        for (int d = 1; d <= 3; d++) {
+            for (int sign : new int[]{-1, 1}) {
+                int nx = west ? x : x + sign * d;
+                int ny = west ? y + sign * d : y;
+                if (placed.inside(nx, ny)) {
+                    GielinorObjects.Style s = placed.style(nx, ny, west);
+                    if (s != null && s.building()) {
+                        return s;
+                    }
+                }
+            }
+        }
+        return GielinorObjects.Style.LOGS;
+    }
+
     /** A number that looks random but is always the same for a square (a 64-bit mixing function). */
-    private static int scramble(int x, int y) {
+    static int scramble(int x, int y) {
         long h = (long) x * 0x9E3779B97F4A7C15L + y;
         h ^= h >>> 33;
         h *= 0xFF51AFD7ED558CCDL;

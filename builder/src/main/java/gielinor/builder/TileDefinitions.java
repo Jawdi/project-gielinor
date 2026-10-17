@@ -78,6 +78,41 @@ final class TileDefinitions {
         return out;
     }
 
+    /**
+     * A sheet's blend overlays for a material that attach to exactly the
+     * edges in `edges` (any of N, W, E and S, Zomboid's `FloorAttachment`
+     * properties): one edge for a fringe of the material along it, two for
+     * the half of a square at their corner.
+     */
+    List<String> blends(String sheet, String material, String edges) {
+        List<String> out = new ArrayList<>();
+        tiles.forEach((name, props) -> {
+            if (!name.startsWith(sheet + "_") || !material.equals(props.get("FloorMaterial"))) {
+                return;
+            }
+            StringBuilder attached = new StringBuilder();
+            for (char e : "NWES".toCharArray()) {
+                if (props.containsKey("FloorAttachment" + e)) {
+                    attached.append(e);
+                }
+            }
+            if (attached.length() > 0 && attached.toString().equals(sorted(edges))) {
+                out.add(name);
+            }
+        });
+        return out;
+    }
+
+    private static String sorted(String edges) {
+        StringBuilder out = new StringBuilder();
+        for (char e : "NWES".toCharArray()) {
+            if (edges.indexOf(e) >= 0) {
+                out.append(e);
+            }
+        }
+        return out.toString();
+    }
+
     private static String string(ByteBuffer in) {
         int start = in.position();
         while (in.get() != '\n') {

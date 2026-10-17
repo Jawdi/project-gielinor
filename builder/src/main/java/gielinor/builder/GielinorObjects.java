@@ -254,11 +254,11 @@ final class GielinorObjects {
     private record WallKind(Style style, boolean window) {
     }
 
-    /** A wall on the map: its object, level, tile, shape (0 straight, 2 corner, 9 diagonal) and turn. */
+    /** A wall on the map: its object, level, tile, shape (0 straight, 2 corner) and turn. */
     private record Wall(int id, int level, int x, int y, int shape, int turn, WallKind kind) {
-        /** The tile's sides it stands along: one for a straight wall, two for a corner, none for a diagonal. */
+        /** The tile's sides it stands along: one for a straight wall, two for a corner. */
         int[] sides() {
-            return shape == 9 ? new int[0] : shape == 2 ? new int[]{turn, (turn + 1) & 3} : new int[]{turn};
+            return shape == 2 ? new int[]{turn, (turn + 1) & 3} : new int[]{turn};
         }
     }
 
@@ -346,10 +346,13 @@ final class GielinorObjects {
                         }
                         WallKind kind = wallKind(def);
                         if (kind != null) {
-                            walls.add(new Wall(l.getId(), level, worldX, worldY, type, turn, kind));
+                            walls.add(type == 9 ? squared(ground, l.getId(), level, worldX, worldY, turn, kind)
+                                : new Wall(l.getId(), level, worldX, worldY, type, turn, kind));
                         }
-                    } else if (type >= 12 && type <= 21) {
-                        // A roof covers the tile on the level below it.
+                    } else if (type >= 12 && type <= 17) {
+                        // A roof covers the tile on the level below it (its eaves,
+                        // types 18 to 21, overhang the tiles outside the walls,
+                        // which Zomboid's roofs don't).
                         ground.roof(level, worldX - GielinorMap.FIRST_SQUARE_X * 64, worldY - GielinorMap.FIRST_SQUARE_Y * 64,
                             roofMaterial(def, type));
                         counts.merge("roof tiles", 1, Integer::sum);
@@ -404,9 +407,6 @@ final class GielinorObjects {
                 continue;
             }
             counts.merge(w.kind.window ? "windows" : w.kind.style.name().toLowerCase(Locale.ROOT), 1, Integer::sum);
-            if (w.shape == 9) {
-                diagonal(levels[w.level], w);
-            }
             for (int side : w.sides()) {
                 side(levels[w.level], w.x, w.y, side, w.kind.style, w.kind.window ? WINDOW : NONE);
             }
@@ -419,7 +419,7 @@ final class GielinorObjects {
 
     private final Map<Integer, Integer> roofMaterials = new HashMap<>();
 
-    /** A roof's material, by its model's colour (an index into {@link GielinorMap#ROOF_TILES}). */
+    /** A roof's style, by its model's colour (see {@link GielinorRoofs}). */
     private int roofMaterial(ObjectDefinition def, int shape) throws IOException {
         Integer known = roofMaterials.get(def.getId());
         if (known != null) {
@@ -439,10 +439,11 @@ final class GielinorObjects {
             rgb[k] /= Math.max(total, 1);
         }
         int material = switch (colourName(rgb)) {
-            case "red" -> 1;
-            case "brown", "tan", "beige" -> 2;
-            case "green" -> 3;
-            default -> 0;
+            case "red" -> GielinorRoofs.CLAY;
+            case "brown", "tan" -> GielinorRoofs.BOARDS;
+            case "beige" -> GielinorRoofs.PALE;
+            case "green" -> GielinorRoofs.GREEN;
+            default -> GielinorRoofs.SLATE;
         };
         roofMaterials.put(def.getId(), material);
         return material;
@@ -726,27 +727,42 @@ final class GielinorObjects {
     }
 
     /**
-     * A wall across a tile, from corner to corner: Zomboid has no slanted
-     * walls, so it steps across the tile's squares. Turned 0 or 2 it runs
-     * from the tile's south-west corner to its north-east, else from its
-     * north-west to its south-east.
+     * A wall across a tile, from corner to corner, as the corner of two of
+     * the tile's sides: Zomboid has no slanted walls. Turned 0 or 2 it runs
+     * from the tile's south-west corner to its north-east, so it's either
+     * the tile's west and north sides or its east and south; else from its
+     * north-west corner to its south-east, so its north and east sides or
+     * its south and west. The pair facing out of the building wins (the
+     * game cuts a building's corners so, and its floors and roofs above
+     * still cover the whole tile), and the tile is then inside; along a
+     * wall standing in the open (a castle's angled walls) the tiles step
+     * along it a tile at a time.
      */
-    private static void diagonal(Placed placed, Wall w) {
-        int scale = GielinorMap.SCALE;
-        int x = (w.x - GielinorMap.FIRST_SQUARE_X * 64) * scale;
-        int y = placed.height - (w.y - GielinorMap.FIRST_SQUARE_Y * 64 + 1) * scale;
-        Style s = w.kind.style;
-        if (w.turn % 2 == 0) {
-            placed.edge(x, y + 1, true, s, NONE);
-            placed.edge(x, y + 1, false, s, NONE);
-            placed.edge(x + 1, y, true, s, NONE);
-            placed.edge(x + 1, y, false, s, NONE);
-        } else {
-            placed.edge(x, y, false, s, NONE);
-            placed.edge(x + 1, y, true, s, NONE);
-            placed.edge(x + 1, y + 1, false, s, NONE);
-            placed.edge(x + 2, y + 1, true, s, NONE);
+    private static Wall squared(GielinorMap.GroundGrid ground, int id, int level, int x, int y, int turn, WallKind kind) {
+        boolean rising = turn % 2 == 0;
+        // Corner turns: 0 west and north, 1 north and east, 2 east and south, 3 south and west.
+        int first = rising ? 0 : 1;
+        int second = rising ? 2 : 3;
+        int tx = x - GielinorMap.FIRST_SQUARE_X * 64;
+        int ty = y - GielinorMap.FIRST_SQUARE_Y * 64;
+        int firstIn = indoorBeyond(ground, level, tx, ty, first);
+        int secondIn = indoorBeyond(ground, level, tx, ty, second);
+        int corner = firstIn <= secondIn ? first : second;
+        if (firstIn != secondIn) {
+            ground.setIndoorTile(level, tx, ty);
         }
+        return new Wall(id, level, x, y, 2, corner, kind);
+    }
+
+    /** How many of the tiles beyond a corner's two sides (see {@link Wall#sides}) are inside a building. */
+    private static int indoorBeyond(GielinorMap.GroundGrid ground, int level, int tx, int ty, int corner) {
+        int count = 0;
+        for (int side : new int[]{corner, (corner + 1) & 3}) {
+            int nx = side == 0 ? tx - 1 : side == 2 ? tx + 1 : tx;
+            int ny = side == 1 ? ty + 1 : side == 3 ? ty - 1 : ty;
+            count += ground.indoorTile(level, nx, ny) ? 1 : 0;
+        }
+        return count;
     }
 
     /** A tree, bush, plant or rock on the ground, one for each of the game's tiles it covers, somewhere on that tile. */

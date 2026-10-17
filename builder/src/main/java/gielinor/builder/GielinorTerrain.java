@@ -22,25 +22,35 @@ import net.runelite.cache.region.RegionLoader;
  * sand, browns dirt, and greens grass, darker or lighter by their lightness.
  */
 final class GielinorTerrain {
-    /** Zomboid's kinds of ground (their tiles' `FloorMaterial`). */
+    /**
+     * Zomboid's kinds of ground (their tiles' `FloorMaterial`; the game's
+     * stone paths as Zomboid's gravel road), and how they blend: where two
+     * meet, the higher `layer` laps over the edge of the lower.
+     */
     enum Ground {
-        WATER("blends_natural_02", "Water"),
-        STONE("blends_street_01", "Road_01"),
-        SAND("blends_natural_01", "Sand"),
-        DIRT("blends_natural_01", "Dirt"),
-        DIRT_GRASS("blends_natural_01", "Dirt_Grass"),
-        GRASS_DARK("blends_natural_01", "Grass_Dark"),
-        GRASS_MEDIUM("blends_natural_01", "Grass_Medium"),
-        GRASS_LIGHT("blends_natural_01", "Grass_Light"),
-        /** A bridge's or jetty's deck over water, which the game draws as an object (laid as planks; the dirt tiles stand in where a material's asked). */
-        DECK("blends_natural_01", "Dirt");
+        WATER("blends_natural_02", "Water", 7),
+        STONE("blends_street_01", "Road_02", 6),
+        SAND("blends_natural_01", "Sand", 4),
+        DIRT("blends_natural_01", "Dirt", 5),
+        DIRT_GRASS("blends_natural_01", "Dirt_Grass", 3),
+        GRASS_DARK("blends_natural_01", "Grass_Dark", 0),
+        GRASS_MEDIUM("blends_natural_01", "Grass_Medium", 1),
+        GRASS_LIGHT("blends_natural_01", "Grass_Light", 2),
+        /**
+         * A bridge's or jetty's deck over water, which the game draws as an
+         * object (laid as planks, not blended; the dirt tiles stand in where
+         * a material's asked).
+         */
+        DECK("blends_natural_01", "Dirt", -1);
 
         final String sheet;
         final String material;
+        final int layer;
 
-        Ground(String sheet, String material) {
+        Ground(String sheet, String material, int layer) {
             this.sheet = sheet;
             this.material = material;
+            this.layer = layer;
         }
     }
 
@@ -88,6 +98,20 @@ final class GielinorTerrain {
      */
     static int level(MapDefinition square, int plane, int x, int y) {
         return bridge(square, x, y) ? plane - 1 : plane;
+    }
+
+    /**
+     * Whether the game draws a tile on its own plane: not if its settings
+     * have the 8 bit (drawn on the plane below instead, as the shore's
+     * overlays on plane 1 are drawn over the water) or the 16 bit.
+     */
+    static boolean drawnHere(MapDefinition.Tile tile) {
+        return tile != null && (tile.getSettings() & 24) == 0;
+    }
+
+    /** Whether the game draws a tile on the plane below its own (its settings' 8 bit, see {@link #drawnHere}). */
+    static boolean drawnBelow(MapDefinition.Tile tile) {
+        return tile != null && (tile.getSettings() & 8) != 0;
     }
 
     /** Whether the game draws a square's tile (x, y) a level down (see {@link #level}). */

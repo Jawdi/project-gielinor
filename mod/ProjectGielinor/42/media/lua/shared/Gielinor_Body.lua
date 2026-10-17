@@ -124,6 +124,31 @@ function GielinorBody.cover(covered, itemType, itemVisual)
     return covered
 end
 
+--- What a character holds: { right = whether its primary hand holds
+--- something, left = its secondary }.
+function GielinorBody.held(character)
+    return {right = character:getPrimaryHandItem() ~= nil, left = character:getSecondaryHandItem() ~= nil}
+end
+
+--- A body type's hands for what they hold (see GielinorBody.held; nil for
+--- nothing). The game's fists can't curl round a held thing as Zomboid's
+--- hands do, so a hand holding something is posed closed on it, and an
+--- empty one as the game holds it.
+function GielinorBody.handsPiece(type, held)
+    local kits = GielinorKits[type]
+    local key = (held and held.right and "R" or "") .. (held and held.left and "L" or "")
+    return key ~= "" and kits.holding and kits.holding[key] or kits.body.hands
+end
+
+--- Every pose of a body type's hands.
+local function handPoses(kits)
+    local out = {kits.body.hands}
+    for _, itemType in pairs(kits.holding or {}) do
+        table.insert(out, itemType)
+    end
+    return out
+end
+
 --- The body visuals a look shows, but for the `covered` regions:
 --- { item type, texture choice }.
 function GielinorBody.bodyPieces(look, covered)
@@ -213,9 +238,10 @@ end
 
 --- Shows or hides a Gielinor body's regions to suit what it wears, and
 --- gives it the bare skin of the Gielinor clothes it wears (and only theirs).
---- `worn` lists what it wears as { item type, item visual }. Returns whether
---- anything changed.
-function GielinorBody.fitClothes(visual, worn)
+--- `worn` lists what it wears as { item type, item visual }; `held` what it
+--- holds (see GielinorBody.held; nil for nothing). Returns whether anything
+--- changed.
+function GielinorBody.fitClothes(visual, worn, held)
     local type, skin = GielinorBody.bodyOf(visual)
     if not type then
         return false
@@ -255,9 +281,19 @@ function GielinorBody.fitClothes(visual, worn)
             changed = true
         end
     end
-    local regions = GielinorKits[type].body
+    local kits = GielinorKits[type]
     for _, region in ipairs(GielinorBody.REGIONS) do
-        local itemType = regions[region]
+        local itemType = kits.body[region]
+        if region == "hands" then
+            -- Posed for what they hold, any other pose gone.
+            itemType = GielinorBody.handsPiece(type, held)
+            for _, other in ipairs(handPoses(kits)) do
+                if other ~= itemType and visual:hasBodyVisualFromItemType(other) then
+                    visual:removeBodyVisualFromItemType(other)
+                    changed = true
+                end
+            end
+        end
         if itemType then
             local shown = visual:hasBodyVisualFromItemType(itemType)
             if covered[region] and shown then
@@ -375,7 +411,7 @@ function GielinorBody.dress(character, look)
         return inventory:AddItem(fullType)
     end)
     GielinorBody.layBody(character:getHumanVisual(), look, coveredByLook(look))
-    GielinorBody.fitClothes(character:getHumanVisual(), GielinorBody.wornBy(character))
+    GielinorBody.fitClothes(character:getHumanVisual(), GielinorBody.wornBy(character), GielinorBody.held(character))
     character:resetModel()
 end
 
@@ -395,16 +431,22 @@ function GielinorBody.randomLook(female, random)
     return look
 end
 
--- Characters' bodies follow their clothes as they change. Zomboid tells of
--- a change as it begins, before the worn items have changed, so the body is
--- fitted on the character's next update instead, and checked now and then
--- besides in case a change slips by.
+-- Characters' bodies follow their clothes, and their hands what they hold,
+-- as they change. Zomboid tells of a change as it begins, before the worn
+-- items have changed, so the body is fitted on the character's next update
+-- instead, and checked now and then besides in case a change slips by.
 local CHECK_EVERY = 60
 local due = {}
 
 local function onClothingUpdated(character)
     if instanceof(character, "IsoPlayer") then
         due[character] = 2
+    end
+end
+
+local function onEquip(character)
+    if instanceof(character, "IsoPlayer") then
+        due[character] = 1
     end
 end
 
@@ -418,10 +460,12 @@ local function onPlayerUpdate(player)
     elseif ZombRand(CHECK_EVERY) ~= 0 then
         return
     end
-    if GielinorBody.fitClothes(player:getHumanVisual(), GielinorBody.wornBy(player)) then
+    if GielinorBody.fitClothes(player:getHumanVisual(), GielinorBody.wornBy(player), GielinorBody.held(player)) then
         player:resetModelNextFrame()
     end
 end
 
 Events.OnClothingUpdated.Add(onClothingUpdated)
+Events.OnEquipPrimary.Add(onEquip)
+Events.OnEquipSecondary.Add(onEquip)
 Events.OnPlayerUpdate.Add(onPlayerUpdate)

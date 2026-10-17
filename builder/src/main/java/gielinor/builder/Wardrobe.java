@@ -189,8 +189,20 @@ final class Wardrobe {
             // on a body (cuffs and the like on body type A's kits) is skin.
             int underwear = SharedPalette.fixed(UNDERWEAR[type]);
             lua.append("        body = {\n");
+            StringBuilder holding = new StringBuilder();
+            // The hands in each pose: holding nothing, or something in the
+            // right hand, the left or both (see HumanFit.grip).
+            List<java.util.Map.Entry<Region, String>> poses = new ArrayList<>();
             for (Region region : REGIONS) {
-                String name = "GielinorBody" + capital(region.name()) + "_" + t;
+                for (String held : region.name().equals("hands") ? new String[]{"", "R", "L", "RL"} : new String[]{""}) {
+                    poses.add(java.util.Map.entry(region, held));
+                }
+            }
+            for (java.util.Map.Entry<Region, String> pose : poses) {
+                Region region = pose.getKey();
+                String held = pose.getValue();
+                String name = "GielinorBody" + capital(region.name()) + held + "_" + t;
+                models.gripping(held.contains("R"), held.contains("L"));
                 boolean legsRegion = region.name().equals("legs");
                 boolean cutBriefs = legsRegion;
                 double[] cuts = cutBriefs ? new double[]{UNDERWEAR_FROM, UNDERWEAR_TO} : new double[0];
@@ -203,10 +215,16 @@ final class Wardrobe {
                             return FUR.contains(source) ? SharedPalette.fixed(rgb) : SharedPalette.shade(0);
                         }, true, cuts, media)) {
                     script.append(item(name, "Gielinor body", null));
-                    lua.append("            ").append(region.name()).append(" = \"").append(MODULE).append('.').append(name).append("\",\n");
+                    if (held.isEmpty()) {
+                        lua.append("            ").append(region.name()).append(" = \"").append(MODULE).append('.').append(name).append("\",\n");
+                    } else {
+                        holding.append("            ").append(held).append(" = \"").append(MODULE).append('.').append(name).append("\",\n");
+                    }
                 }
             }
+            models.gripping(false, false);
             lua.append("        },\n");
+            lua.append("        holding = {\n").append(holding).append("        },\n");
             models.fitting(type, false);
 
             // Heads and hair, one pair per hairstyle.

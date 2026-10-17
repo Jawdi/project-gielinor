@@ -127,7 +127,10 @@ final class HumanFit {
             // Weighted by where it was, before the hands move to the grip.
             Bound shared = weightsFromBody(p, bone, armsAllowed);
             if (bone.endsWith("_Hand") || bone.endsWith("_Forearm")) {
-                p = toGrip(filledOut(p, bone), bone);
+                p = filledOut(p, bone);
+                if (bone.contains("_R_") ? gripRight : gripLeft) {
+                    p = toGrip(p, bone);
+                }
             }
             out[i] = new Bound(p, shared.bones(), shared.weights());
             mesh.vertices.set(i, p);
@@ -187,12 +190,33 @@ final class HumanFit {
     };
     private double[][] toGrip = TO_GRIP[2];
 
+    /** Whether the right and left hands are fitted closed on the grip (see {@link #toGrip}), else as the model holds them. */
+    private boolean gripRight;
+    private boolean gripLeft;
+
+    /**
+     * Fits what's fitted next with the right and left hands closed on what
+     * they'd hold. Zomboid's open hands curl round a held thing; the game's
+     * fists can't, so a hand holding something is moved to it, and one
+     * holding nothing is left as the model holds it: moved, an empty hand
+     * would sit behind the leg as Zomboid's idle turns its palms back.
+     */
+    void grip(boolean right, boolean left) {
+        gripRight = right;
+        gripLeft = left;
+    }
+
     /** Fits what's fitted next to the player's body type (0 for A, 1 for B, -1 for anyone else). */
     void bodyType(int type) {
         toGrip = TO_GRIP[type >= 0 && type < 2 ? type : 2];
     }
-    /** How far down the forearm (as a share of it) it starts curving towards the grip. */
-    private static final double FOREARM_CURVE_FROM = 0.4;
+    /**
+     * How far down the forearm (as a share of it) it starts curving towards
+     * the grip: below where the arms (and a top's sleeves) end and the hands
+     * begin, so only the hands bend, and the hands holding and not holding
+     * meet the same arms.
+     */
+    private static final double FOREARM_CURVE_FROM = 0.6;
 
     /**
      * A forearm or hand vertex moved so the hand closes on the grip: the

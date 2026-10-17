@@ -530,6 +530,11 @@ final class ItemModels {
         this.legsOnly = legsOnly;
     }
 
+    /** Fits the pieces written next with the right and left hands closed on what they hold (see {@link HumanFit#grip}). */
+    void gripping(boolean right, boolean left) {
+        fit.grip(right, left);
+    }
+
     /** Puts a model on Zomboid's skeleton (see {@link HumanFit#fit}), winds each piece of it Zomboid's way, and returns how each vertex is bound. */
     private Bound[] fitted(Mesh mesh, double crown, boolean findArms, boolean armsAllowed) {
         Bound[] bounds = fit.fit(mesh, crown, findArms, armsAllowed && !legsOnly);

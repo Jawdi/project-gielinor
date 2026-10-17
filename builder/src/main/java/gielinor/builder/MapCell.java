@@ -21,13 +21,17 @@ import java.util.Map;
  * <ul>
  * <li>`X_Y.lotheader`: "LOTH", version 1, the tile names the cell uses (each
  * ending in a newline), the chunk's width and height in squares, its lowest
- * and highest level, its rooms and buildings, then a zombie density byte for
- * each chunk, column by column.</li>
+ * and highest level, its rooms (each a name ending in a newline, its level,
+ * its rectangles as x, y, width and height in the cell's squares, and no
+ * objects), its buildings (each its rooms, by their place in the list), then
+ * a zombie density byte for each chunk, column by column. A square is in a
+ * room if one of the room's rectangles holds it.</li>
  * <li>`world_X_Y.lotpack`: "LOTP", version 1, the chunk width, a table of
  * where each chunk's data starts (8 bytes a chunk, column by column), then
  * each chunk's squares level by level, column by column: a count of tiles
- * plus one, a room (-1 for none) and the tiles as indices into the header's
- * list. A run of empty squares is -1 and its length.</li>
+ * plus one, -1 (rooms come from the header) and the tiles as indices into
+ * the header's list. A run of empty squares, which may run on from one
+ * level to the next, is -1 and its length.</li>
  * <li>`chunkdata_X_Y.bin`: for pathfinding, big-endian: version 1, then for
  * each chunk row by row its type (0 open, 1 solid, 3 water, 4 room, or 2
  * mixed followed by a byte for each square: 1 solid, 2 wall north, 4 wall
@@ -45,11 +49,19 @@ final class MapCell {
     static final int BIT_WALL_NORTH = 2;
     static final int BIT_WALL_WEST = 4;
     static final int BIT_WATER = 8;
+    static final int BIT_ROOM = 16;
 
     final int cellX;
     final int cellY;
     /** Each square's tiles at ground level, floor first, by x + y * SIZE (null for none). */
     private final String[][] squares = new String[SIZE * SIZE][];
+    /** Each square's tiles a level up (roofs), as {@link #squares}. */
+    private final String[][] above = new String[SIZE * SIZE][];
+    /** The rooms, each a name and its rectangles (x, y, width, height). */
+    private final List<String> roomNames = new ArrayList<>();
+    private final List<List<int[]>> roomRects = new ArrayList<>();
+    /** The buildings, each its rooms by their place in the list. */
+    private final List<List<Integer>> buildings = new ArrayList<>();
     /** Each square's pathfinding bits. */
     private final byte[] bits = new byte[SIZE * SIZE];
     /** Zombies per chunk, 0 to 255, by chunk x + y * CHUNKS. */
@@ -65,6 +77,22 @@ final class MapCell {
         squares[x + y * SIZE] = tiles;
     }
 
+    /** Sets a square's tiles a level up (cell-local coordinates). */
+    void setAbove(int x, int y, String... tiles) {
+        above[x + y * SIZE] = tiles;
+    }
+
+    /** Adds a room on the ground level, returning its place in the list. */
+    int addRoom(String name, List<int[]> rects) {
+        roomNames.add(name);
+        roomRects.add(rects);
+        return roomNames.size() - 1;
+    }
+
+    void addBuilding(List<Integer> rooms) {
+        buildings.add(rooms);
+    }
+
     void setBits(int x, int y, int squareBits) {
         bits[x + y * SIZE] = (byte) squareBits;
     }
@@ -76,12 +104,14 @@ final class MapCell {
     void write(Path dir) throws IOException {
         Map<String, Integer> index = new HashMap<>();
         List<String> used = new ArrayList<>();
-        for (String[] tiles : squares) {
-            if (tiles != null) {
-                for (String t : tiles) {
-                    if (!index.containsKey(t)) {
-                        index.put(t, used.size());
-                        used.add(t);
+        for (String[][] level : new String[][][]{squares, above}) {
+            for (String[] tiles : level) {
+                if (tiles != null) {
+                    for (String t : tiles) {
+                        if (!index.containsKey(t)) {
+                            index.put(t, used.size());
+                            used.add(t);
+                        }
                     }
                 }
             }
@@ -104,9 +134,27 @@ final class MapCell {
         writeInt(out, ints, CHUNK);
         writeInt(out, ints, CHUNK);
         writeInt(out, ints, 0);
-        writeInt(out, ints, 0);
-        writeInt(out, ints, 0);
-        writeInt(out, ints, 0);
+        writeInt(out, ints, topLevel());
+        writeInt(out, ints, roomNames.size());
+        for (int r = 0; r < roomNames.size(); r++) {
+            out.writeBytes(roomNames.get(r).getBytes(StandardCharsets.UTF_8));
+            out.write('\n');
+            writeInt(out, ints, 0);
+            writeInt(out, ints, roomRects.get(r).size());
+            for (int[] rect : roomRects.get(r)) {
+                for (int v : rect) {
+                    writeInt(out, ints, v);
+                }
+            }
+            writeInt(out, ints, 0);
+        }
+        writeInt(out, ints, buildings.size());
+        for (List<Integer> rooms : buildings) {
+            writeInt(out, ints, rooms.size());
+            for (int r : rooms) {
+                writeInt(out, ints, r);
+            }
+        }
         for (int x = 0; x < CHUNKS; x++) {
             for (int y = 0; y < CHUNKS; y++) {
                 out.write(zombies[x + y * CHUNKS]);
@@ -122,26 +170,30 @@ final class MapCell {
         out.putInt(1);
         out.putInt(CHUNK);
         out.position(tableStart + CHUNKS * CHUNKS * 8);
+        int top = topLevel();
         for (int cx = 0; cx < CHUNKS; cx++) {
             for (int cy = 0; cy < CHUNKS; cy++) {
                 out.putLong(tableStart + (cx * CHUNKS + cy) * 8, out.position());
                 int empty = 0;
-                for (int x = 0; x < CHUNK; x++) {
-                    for (int y = 0; y < CHUNK; y++) {
-                        String[] tiles = squares[cx * CHUNK + x + (cy * CHUNK + y) * SIZE];
-                        if (tiles == null || tiles.length == 0) {
-                            empty++;
-                            continue;
-                        }
-                        if (empty > 0) {
+                for (int z = 0; z <= top; z++) {
+                    String[][] level = z == 0 ? squares : above;
+                    for (int x = 0; x < CHUNK; x++) {
+                        for (int y = 0; y < CHUNK; y++) {
+                            String[] tiles = level[cx * CHUNK + x + (cy * CHUNK + y) * SIZE];
+                            if (tiles == null || tiles.length == 0) {
+                                empty++;
+                                continue;
+                            }
+                            if (empty > 0) {
+                                out.putInt(-1);
+                                out.putInt(empty);
+                                empty = 0;
+                            }
+                            out.putInt(tiles.length + 1);
                             out.putInt(-1);
-                            out.putInt(empty);
-                            empty = 0;
-                        }
-                        out.putInt(tiles.length + 1);
-                        out.putInt(-1);
-                        for (String t : tiles) {
-                            out.putInt(index.get(t));
+                            for (String t : tiles) {
+                                out.putInt(index.get(t));
+                            }
                         }
                     }
                 }
@@ -154,6 +206,16 @@ final class MapCell {
         byte[] result = new byte[out.position()];
         out.get(0, result);
         return result;
+    }
+
+    /** The highest level with anything on it: 1 if anything's a level up, else 0. */
+    private int topLevel() {
+        for (String[] tiles : above) {
+            if (tiles != null && tiles.length > 0) {
+                return 1;
+            }
+        }
+        return 0;
     }
 
     private byte[] chunkData() throws IOException {

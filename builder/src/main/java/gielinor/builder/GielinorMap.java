@@ -59,17 +59,77 @@ final class GielinorMap {
         private final int tilesX;
         private final int tilesY;
         private final byte[] tiles;
+        /** Each tile's {@link #INDOOR} and {@link #LOADED} bits. */
+        private final byte[] flags;
+        private static final int INDOOR = 1;
+        private static final int LOADED = 2;
 
         GroundGrid(int squaresX, int squaresY) {
             tilesX = squaresX * 64;
             tilesY = squaresY * 64;
             tiles = new byte[tilesX * tilesY];
+            flags = new byte[tilesX * tilesY];
             width = tilesX * SCALE;
             height = tilesY * SCALE;
         }
 
         void setTile(int tx, int ty, GielinorTerrain.Ground g) {
             tiles[tx + ty * tilesX] = (byte) (g.ordinal() + 1);
+        }
+
+        /** Notes a tile as part of the game's world (its square loaded), and whether it's indoors. */
+        void setLoaded(int tx, int ty, boolean indoor) {
+            flags[tx + ty * tilesX] = (byte) (LOADED | (indoor ? INDOOR : 0));
+        }
+
+        /** Whether a Zomboid square is indoors (see {@link GielinorTerrain#indoor}). */
+        boolean indoor(int zx, int zy) {
+            if (zx < 0 || zy < 0 || zx >= width || zy >= height) {
+                return false;
+            }
+            return (flags[zx / SCALE + (tilesY - 1 - zy / SCALE) * tilesX] & INDOOR) != 0;
+        }
+
+        /**
+         * Fills the gaps in the world's ground (tiles of a loaded square with
+         * none: the game's tiles that show only a see-through overlay) with
+         * the ground most of their neighbours have, so the world has no holes.
+         * Returns how many were filled.
+         */
+        int fillGaps() {
+            int filled = 0;
+            for (int pass = 0; pass < 4; pass++) {
+                byte[] next = tiles.clone();
+                for (int ty = 0; ty < tilesY; ty++) {
+                    for (int tx = 0; tx < tilesX; tx++) {
+                        int i = tx + ty * tilesX;
+                        if (tiles[i] != 0 || (flags[i] & LOADED) == 0) {
+                            continue;
+                        }
+                        int[] votes = new int[GielinorTerrain.Ground.values().length + 1];
+                        int best = 0;
+                        for (int dy = -1; dy <= 1; dy++) {
+                            for (int dx = -1; dx <= 1; dx++) {
+                                int nx = tx + dx;
+                                int ny = ty + dy;
+                                if (nx >= 0 && ny >= 0 && nx < tilesX && ny < tilesY && tiles[nx + ny * tilesX] != 0) {
+                                    int g = tiles[nx + ny * tilesX];
+                                    votes[g]++;
+                                    if (votes[g] > votes[best]) {
+                                        best = g;
+                                    }
+                                }
+                            }
+                        }
+                        if (best != 0) {
+                            next[i] = (byte) best;
+                            filled++;
+                        }
+                    }
+                }
+                System.arraycopy(next, 0, tiles, 0, tiles.length);
+            }
+            return filled;
         }
 
         /** The ground at a Zomboid square, or null for none. */
@@ -110,6 +170,8 @@ final class GielinorMap {
                 }
                 for (int lx = 0; lx < 64; lx++) {
                     for (int ly = 0; ly < 64; ly++) {
+                        ground.setLoaded((sx - FIRST_SQUARE_X) * 64 + lx, (sy - FIRST_SQUARE_Y) * 64 + ly,
+                            GielinorTerrain.indoor(square.getTiles()[0][lx][ly]));
                         GielinorTerrain.Ground g = terrain.ground(square.getTiles()[0][lx][ly]);
                         if (g != null) {
                             counts.merge(g, 1, Integer::sum);
@@ -119,6 +181,7 @@ final class GielinorMap {
                 }
             }
         }
+        int gaps = ground.fillGaps();
         int width = ground.width;
         int height = ground.height;
         GielinorObjects.Placed placed = new GielinorObjects.Placed(width, height);
@@ -141,8 +204,16 @@ final class GielinorMap {
                         List<String> choices = floors.get(g);
                         // The same square always gets the same of the material's tiles.
                         List<String> square = new java.util.ArrayList<>();
-                        square.add(choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
-                        int bits = g == GielinorTerrain.Ground.WATER ? MapCell.BIT_WATER : 0;
+                        boolean inside = g != GielinorTerrain.Ground.WATER && ground.indoor(zx, zy);
+                        if (inside) {
+                            // Indoors: a wooden or stone floor, and a roof a level up.
+                            boolean stone = g == GielinorTerrain.Ground.STONE;
+                            square.add(stone ? STONE_FLOOR : WOODEN_FLOOR);
+                            cell.setAbove(x, y, stone ? SLATE_ROOF : SHINGLE_ROOF);
+                        } else {
+                            square.add(choices.get(Math.floorMod(scramble(zx, zy), choices.size())));
+                        }
+                        int bits = g == GielinorTerrain.Ground.WATER ? MapCell.BIT_WATER : inside ? MapCell.BIT_ROOM : 0;
                         bits |= standing(placed, zx, zy, square, g != GielinorTerrain.Ground.WATER);
                         cell.set(x, y, square.toArray(new String[0]));
                         cell.setBits(x, y, bits);
@@ -168,6 +239,7 @@ final class GielinorMap {
                         cell.setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
                 }
+                rooms(cell, ground, placed);
                 cell.write(dir);
             }
         }
@@ -175,7 +247,8 @@ final class GielinorMap {
         writeWorldMap(dir, ground, cellsX, cellsY);
         writeSpawnPoints(dir, startX, startY);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
-        System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts);
+        System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts + ", " + gaps + " gaps filled, "
+            + roomCount + " rooms in " + buildingCount + " buildings");
     }
 
     /**
@@ -256,6 +329,143 @@ final class GielinorMap {
         return GielinorObjects.Style.LOGS;
     }
 
+    /** Indoor floors and roofs (Zomboid's tiles): planks, flagstones, shingles over wood and slate over stone. */
+    private static final String WOODEN_FLOOR = "floors_interior_tilesandwood_01_41";
+    private static final String STONE_FLOOR = "floors_exterior_tilesandstone_01_5";
+    private static final String SHINGLE_ROOF = "roofs_02_22";
+    private static final String SLATE_ROOF = "roofs_01_22";
+    /** The room name for now: the rooms hold nothing yet that their name would choose. */
+    private static final String ROOM = "gielinor";
+
+    private static int roomCount;
+    private static int buildingCount;
+
+    /**
+     * The cell's rooms and buildings, from its indoor squares: a room is the
+     * squares reached from one another without crossing a wall (or a door),
+     * written as rectangles; a building the rooms whose squares touch, walls
+     * or not. A building across a cell's edge is one in each cell.
+     */
+    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed placed) {
+        int size = MapCell.SIZE;
+        int x0 = cell.cellX * size;
+        int y0 = cell.cellY * size;
+        int[] room = new int[size * size];
+        java.util.Arrays.fill(room, -1);
+        int[] queue = new int[size * size];
+        for (int start = 0; start < size * size; start++) {
+            if (room[start] != -1 || !indoorSquare(ground, x0 + start % size, y0 + start / size)) {
+                continue;
+            }
+            // The squares of one room.
+            List<Integer> squares = new java.util.ArrayList<>();
+            int head = 0;
+            int tail = 0;
+            queue[tail++] = start;
+            room[start] = -2;
+            while (head < tail) {
+                int i = queue[head++];
+                squares.add(i);
+                int x = i % size;
+                int y = i / size;
+                int[][] steps = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (int[] s : steps) {
+                    int nx = x + s[0];
+                    int ny = y + s[1];
+                    if (nx < 0 || ny < 0 || nx >= size || ny >= size || room[nx + ny * size] != -1
+                            || !indoorSquare(ground, x0 + nx, y0 + ny) || walled(placed, x0 + x, y0 + y, x0 + nx, y0 + ny)) {
+                        continue;
+                    }
+                    room[nx + ny * size] = -2;
+                    queue[tail++] = nx + ny * size;
+                }
+            }
+            int id = cell.addRoom(ROOM, rectangles(squares, size));
+            for (int i : squares) {
+                room[i] = id;
+            }
+            roomCount++;
+        }
+        // The buildings: rooms whose squares touch.
+        boolean[] seen = new boolean[size * size];
+        for (int start = 0; start < size * size; start++) {
+            if (seen[start] || room[start] < 0) {
+                continue;
+            }
+            java.util.TreeSet<Integer> rooms = new java.util.TreeSet<>();
+            int head = 0;
+            int tail = 0;
+            queue[tail++] = start;
+            seen[start] = true;
+            while (head < tail) {
+                int i = queue[head++];
+                rooms.add(room[i]);
+                int x = i % size;
+                int y = i / size;
+                int[][] steps = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (int[] s : steps) {
+                    int nx = x + s[0];
+                    int ny = y + s[1];
+                    if (nx >= 0 && ny >= 0 && nx < size && ny < size && !seen[nx + ny * size] && room[nx + ny * size] >= 0) {
+                        seen[nx + ny * size] = true;
+                        queue[tail++] = nx + ny * size;
+                    }
+                }
+            }
+            cell.addBuilding(new java.util.ArrayList<>(rooms));
+            buildingCount++;
+        }
+    }
+
+    private static boolean indoorSquare(GroundGrid ground, int zx, int zy) {
+        GielinorTerrain.Ground g = ground.at(zx, zy);
+        return g != null && g != GielinorTerrain.Ground.WATER && ground.indoor(zx, zy);
+    }
+
+    /** Whether a wall (or door, or gate) stands between two squares side by side. */
+    private static boolean walled(GielinorObjects.Placed placed, int ax, int ay, int bx, int by) {
+        int x = Math.max(ax, bx);
+        int y = Math.max(ay, by);
+        boolean west = ax != bx;
+        return placed.inside(x, y) && (placed.style(x, y, west) != null || placed.gap(x, y, west) != GielinorObjects.NONE);
+    }
+
+    /** A room's squares (by x + y * size) as rectangles (x, y, width, height): runs along each row, stacked while the rows below match. */
+    private static List<int[]> rectangles(List<Integer> squares, int size) {
+        java.util.Set<Integer> left = new java.util.HashSet<>(squares);
+        List<int[]> out = new java.util.ArrayList<>();
+        List<Integer> sorted = new java.util.ArrayList<>(squares);
+        sorted.sort(Integer::compare);
+        for (int i : sorted) {
+            if (!left.contains(i)) {
+                continue;
+            }
+            int x = i % size;
+            int y = i / size;
+            int right = x;
+            while (right + 1 < size && left.contains(right + 1 + y * size)) {
+                right++;
+            }
+            int bottom = y;
+            outer:
+            while (bottom + 1 < size) {
+                for (int rx = x; rx <= right; rx++) {
+                    if (!left.contains(rx + (bottom + 1) * size)) {
+                        break outer;
+                    }
+                }
+                bottom++;
+            }
+            for (int ry = y; ry <= bottom; ry++) {
+                for (int rx = x; rx <= right; rx++) {
+                    left.remove(rx + ry * size);
+                }
+            }
+            out.add(new int[]{x, y, right - x + 1, bottom - y + 1});
+        }
+        return out;
+    }
+
     /** A number that looks random but is always the same for a square (a 64-bit mixing function). */
     static int scramble(int x, int y) {
         long h = (long) x * 0x9E3779B97F4A7C15L + y;
@@ -306,8 +516,9 @@ final class GielinorMap {
 
     /**
      * Writes the map Zomboid shows (the M key, and the maps found as loot):
-     * per cell, its ground as rectangles of one feature each, made by running
-     * along each row and stacking equal runs of the rows below onto them.
+     * per cell, its ground and its buildings as rectangles of one feature
+     * each, made by running along each row and stacking equal runs of the
+     * rows below onto them.
      * Points are in squares from the cell's corner.
      *
      * The data goes in `worldmap.xml.bin`, the binary form the game's own
@@ -355,11 +566,42 @@ final class GielinorMap {
                         kinds.add(feature);
                     }
                 }
-                if (rects.isEmpty()) {
+                // The buildings, as the map draws them: their indoor squares,
+                // in rectangles the same way, kept whatever specks of ground go.
+                List<int[]> buildings = new java.util.ArrayList<>();
+                boolean[][] roofed = new boolean[MapCell.SIZE][MapCell.SIZE];
+                for (int y = y0; y < y1; y++) {
+                    for (int x = x0; x < x1; x++) {
+                        if (roofed[x - x0][y - y0] || !ground.indoor(x, y)) {
+                            continue;
+                        }
+                        int right = x;
+                        while (right + 1 < x1 && ground.indoor(right + 1, y) && !roofed[right + 1 - x0][y - y0]) {
+                            right++;
+                        }
+                        int bottom = y;
+                        outer:
+                        while (bottom + 1 < y1) {
+                            for (int rx = x; rx <= right; rx++) {
+                                if (!ground.indoor(rx, bottom + 1) || roofed[rx - x0][bottom + 1 - y0]) {
+                                    break outer;
+                                }
+                            }
+                            bottom++;
+                        }
+                        for (int ry = y; ry <= bottom; ry++) {
+                            for (int rx = x; rx <= right; rx++) {
+                                roofed[rx - x0][ry - y0] = true;
+                            }
+                        }
+                        buildings.add(new int[]{x - x0, y - y0, right + 1 - x0, bottom + 1 - y0});
+                    }
+                }
+                if (rects.isEmpty() && buildings.isEmpty()) {
                     writeInt(bytes, -1);
                     continue;
                 }
-                if (rects.size() > MAX_FEATURES) {
+                if (rects.size() > MAX_FEATURES - buildings.size()) {
                     // Keep the largest; the smallest specks go.
                     Integer[] order = new Integer[rects.size()];
                     for (int i = 0; i < order.length; i++) {
@@ -369,12 +611,16 @@ final class GielinorMap {
                     java.util.Arrays.sort(order, java.util.Comparator.comparingInt(i -> -area(all.get(i))));
                     List<int[]> keptRects = new java.util.ArrayList<>();
                     List<String[]> keptKinds = new java.util.ArrayList<>();
-                    for (int i = 0; i < MAX_FEATURES; i++) {
+                    for (int i = 0; i < MAX_FEATURES - buildings.size(); i++) {
                         keptRects.add(rects.get(order[i]));
                         keptKinds.add(kinds.get(order[i]));
                     }
                     rects = keptRects;
                     kinds = keptKinds;
+                }
+                for (int[] b : buildings) {
+                    rects.add(b);
+                    kinds.add(new String[]{"building", "yes"});
                 }
                 writeInt(bytes, cx);
                 writeInt(bytes, cy);

@@ -68,6 +68,15 @@ final class GielinorTerrain {
         return regions.loadMapDef(regionX << 8 | regionY);
     }
 
+    /**
+     * Whether a tile is indoors: under a roof, as the game marks the tiles
+     * whose roofs it hides when the player walks in (the 4 bit of their
+     * settings).
+     */
+    static boolean indoor(MapDefinition.Tile tile) {
+        return (tile.getSettings() & 4) != 0;
+    }
+
     /** The kind of ground a tile is, or null for none (a gap in the world). */
     Ground ground(MapDefinition.Tile tile) {
         int underlay = tile.getUnderlayId() & 0xffff;

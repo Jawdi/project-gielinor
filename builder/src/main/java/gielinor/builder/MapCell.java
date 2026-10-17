@@ -79,6 +79,19 @@ final class MapCell {
     }
 
     /** Sets a square's tiles on a level (cell-local coordinates), floor first. */
+    /** A square's tiles on a level, or null for none. */
+    String[] get(int level, int x, int y) {
+        return levels[level] == null ? null : levels[level][x + y * SIZE];
+    }
+
+    /** Adds a tile to a square's tiles on a level, after those there. */
+    void add(int level, int x, int y, String tile) {
+        String[] there = get(level, x, y);
+        String[] tiles = there == null ? new String[1] : java.util.Arrays.copyOf(there, there.length + 1);
+        tiles[tiles.length - 1] = tile;
+        set(level, x, y, tiles);
+    }
+
     void set(int level, int x, int y, String... tiles) {
         if (levels[level] == null) {
             levels[level] = new String[SIZE * SIZE][];

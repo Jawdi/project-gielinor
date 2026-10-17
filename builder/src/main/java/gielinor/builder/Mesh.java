@@ -32,6 +32,11 @@ final class Mesh {
      * such as an upper arm or a shin. Empty for meshes not read from the game.
      */
     final List<Integer> groups = new ArrayList<>();
+    /**
+     * How see-through each face is (the game's alpha, 0 solid to 255 gone),
+     * for meshes read from the game's models; empty where nobody needs it.
+     */
+    final List<Integer> alphas = new ArrayList<>();
     /** Each vertex's texture coordinates, for meshes read with them (Zomboid's body). */
     final List<double[]> uvs = new ArrayList<>();
     /**

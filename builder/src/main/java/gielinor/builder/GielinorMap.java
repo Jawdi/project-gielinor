@@ -446,10 +446,13 @@ final class GielinorMap {
                         cell.setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
                 }
-                rooms(cell, ground, levels, objects.furniture());
+                rooms(cell, ground, levels, objects.furniture(), objects.art(), tiles);
                 cell.write(dir);
             }
         }
+        objects.art().tiles().write(media);
+        System.out.println("  own tiles: " + objects.art().tiles().size() + ", " + lanterns + " lanterns and " + containers
+            + " containers added to rooms");
         writeInfo(dir);
         writeWorldMap(dir, ground, cellsX, cellsY);
         writeSpawnPoints(dir, startX, startY);
@@ -657,7 +660,8 @@ final class GielinorMap {
      * walls or not, and those above and below one another. A building across
      * a cell's edge is one in each cell.
      */
-    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed[] levels, GielinorFurniture furniture) {
+    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed[] levels, GielinorFurniture furniture,
+            GielinorArt art, TileDefinitions tiles) throws IOException {
         int size = MapCell.SIZE;
         int x0 = cell.cellX * size;
         int y0 = cell.cellY * size;
@@ -699,6 +703,9 @@ final class GielinorMap {
                 String name = furniture.roomName(things);
                 roomNames.merge(name, 1, Integer::sum);
                 int id = cell.addRoom(name, z, rectangles(squares, size));
+                List<int[]> walls = wallSquares(levels[z], squares, size, x0, y0);
+                light(cell, art, z, walls, things, squares, size);
+                stock(cell, furniture, tiles, levels[z], name, z, walls, things, squares, size, x0, y0);
                 for (int i : squares) {
                     here[i] = id;
                 }
@@ -739,6 +746,116 @@ final class GielinorMap {
     }
 
     private static final int[][] STEPS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+    /** A light is hung where none is nearer than this many squares (the lights shine seven). */
+    private static final int LIGHT_SPACING = 5;
+    /** A room should have a container for each of these squares of it, and one at least from a sixth as many. */
+    private static final int SQUARES_A_CONTAINER = 30;
+    private static int lanterns;
+    private static int containers;
+
+    /**
+     * A room's squares against a wall (of a building, and no door, window or
+     * gate in it), in a scattered order: each the square (by its place in the
+     * cell) and the side its wall is on (0 west, 1 north, 2 east, 3 south).
+     */
+    private static List<int[]> wallSquares(GielinorObjects.Placed placed, List<Integer> squares, int size, int x0, int y0) {
+        List<int[]> out = new java.util.ArrayList<>();
+        for (int i : squares) {
+            int zx = x0 + i % size;
+            int zy = y0 + i / size;
+            int[][] edges = {{zx, zy, 1}, {zx, zy, 0}, {zx + 1, zy, 1}, {zx, zy + 1, 0}};
+            for (int side = 0; side < 4; side++) {
+                int[] e = edges[side];
+                GielinorObjects.Style style = placed.style(e[0], e[1], e[2] == 1);
+                if (style != null && style.building() && placed.gap(e[0], e[1], e[2] == 1) == GielinorObjects.NONE) {
+                    out.add(new int[]{i, side});
+                }
+            }
+        }
+        out.sort(java.util.Comparator.comparingInt(w -> scramble(x0 + w[0] % size, y0 + w[0] / size + w[1] * 7)));
+        return out;
+    }
+
+    /**
+     * Hangs lanterns on a room's walls where the game leaves it dark: going
+     * round its walls (see {@link #wallSquares}), each square takes one
+     * unless a light (the game's own or one already hung) is within
+     * {@link #LIGHT_SPACING} squares.
+     */
+    private static void light(MapCell cell, GielinorArt art, int z, List<int[]> walls, List<String> things, List<Integer> squares,
+            int size) throws IOException {
+        List<Integer> lit = new java.util.ArrayList<>();
+        for (int k = 0; k < squares.size(); k++) {
+            String stacked = things.get(k);
+            for (String t : stacked == null ? new String[0] : stacked.split(java.util.regex.Pattern.quote(GielinorFurniture.STACK))) {
+                if (art.isLight(t)) {
+                    lit.add(squares.get(k));
+                }
+            }
+        }
+        for (int[] w : walls) {
+            int x = w[0] % size;
+            int y = w[0] / size;
+            boolean near = false;
+            for (int l : lit) {
+                near |= Math.max(Math.abs(l % size - x), Math.abs(l / size - y)) <= LIGHT_SPACING;
+            }
+            if (near) {
+                continue;
+            }
+            String lantern = art.lantern(w[1]);
+            if (lantern != null) {
+                cell.add(z, x, y, lantern);
+                lit.add(w[0]);
+                lanterns++;
+            }
+        }
+    }
+
+    /** Whether a square has a door, gate or window on any of its edges (nothing should stand in the way). */
+    private static boolean doorway(GielinorObjects.Placed placed, int zx, int zy) {
+        return placed.gap(zx, zy, true) != GielinorObjects.NONE || placed.gap(zx, zy, false) != GielinorObjects.NONE
+            || placed.gap(zx + 1, zy, true) != GielinorObjects.NONE || placed.gap(zx, zy + 1, false) != GielinorObjects.NONE;
+    }
+
+    /**
+     * Gives a room the containers it lacks (its items' places, filled by
+     * Zomboid as the room's name has it): one for each
+     * {@link #SQUARES_A_CONTAINER} squares, against walls where nothing
+     * stands, facing into the room.
+     */
+    private static void stock(MapCell cell, GielinorFurniture furniture, TileDefinitions tiles, GielinorObjects.Placed placed,
+            String name, int z, List<int[]> walls, List<String> things, List<Integer> squares, int size, int x0, int y0) {
+        int have = 0;
+        for (String stacked : things) {
+            for (String t : stacked == null ? new String[0] : stacked.split(java.util.regex.Pattern.quote(GielinorFurniture.STACK))) {
+                if (tiles.tiles.getOrDefault(t, Map.of()).containsKey("container")) {
+                    have++;
+                }
+            }
+        }
+        int want = squares.size() < SQUARES_A_CONTAINER / 6 ? 0 : Math.max(1, squares.size() / SQUARES_A_CONTAINER);
+        java.util.Set<Integer> used = new java.util.HashSet<>();
+        for (int[] w : walls) {
+            if (have >= want) {
+                break;
+            }
+            int zx = x0 + w[0] % size;
+            int zy = y0 + w[0] / size;
+            if (used.contains(w[0]) || placed.standing(zx, zy) != null || placed.isOpen(zx, zy) || placed.isLanding(zx, zy)
+                    || doorway(placed, zx, zy)) {
+                continue;
+            }
+            String tile = furniture.container(name, "ESWN".charAt(w[1]), scramble(zx, zy));
+            if (tile != null) {
+                cell.add(z, w[0] % size, w[0] / size, tile);
+                used.add(w[0]);
+                have++;
+                containers++;
+            }
+        }
+    }
 
     private static int root(int[] parent, int i) {
         while (parent[i] != i) {

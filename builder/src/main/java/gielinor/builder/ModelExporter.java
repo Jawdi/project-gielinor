@@ -88,6 +88,20 @@ final class ModelExporter {
      * shape.
      */
     Mesh objectMesh(net.runelite.cache.definitions.ObjectDefinition def, int shape) throws IOException {
+        return objectMesh(def, shape, SEE_THROUGH, false);
+    }
+
+    /**
+     * An object's model for drawing as a tile (see {@link TileArt}): scaled
+     * as the game scales the object, its see-through faces (water, glass,
+     * shadows) kept with how see-through they are.
+     */
+    Mesh objectArt(net.runelite.cache.definitions.ObjectDefinition def, int shape) throws IOException {
+        return objectMesh(def, shape, SEE_THROUGH, true);
+    }
+
+    private Mesh objectMesh(net.runelite.cache.definitions.ObjectDefinition def, int shape, int seeThrough, boolean scaled)
+            throws IOException {
         Mesh mesh = new Mesh();
         int[] ids = def.getObjectModels();
         if (ids == null) {
@@ -116,13 +130,24 @@ final class ModelExporter {
             for (int k = 0; textureFind != null && textureReplace != null && k < textureFind.length; k++) {
                 model.retexture(textureFind[k], textureReplace[k]);
             }
-            Mesh part = rawMesh(model, null);
+            Mesh part = rawMesh(model, null, seeThrough);
             int base = mesh.vertices.size();
             mesh.vertices.addAll(part.vertices);
             for (int[] f : part.faces) {
                 mesh.faces.add(new int[]{f[0] + base, f[1] + base, f[2] + base});
             }
             mesh.colours.addAll(part.colours);
+            mesh.alphas.addAll(part.alphas);
+        }
+        if (scaled) {
+            double sx = def.getModelSizeX() / 128.0;
+            double sy = def.getModelSizeHeight() / 128.0;
+            double sz = def.getModelSizeY() / 128.0;
+            for (double[] v : mesh.vertices) {
+                v[0] *= sx;
+                v[1] *= sy;
+                v[2] *= sz;
+            }
         }
         return mesh;
     }
@@ -189,6 +214,13 @@ final class ModelExporter {
 
     /** A game model as a mesh in the game's own units (y down), recoloured as the item asks. */
     Mesh rawMesh(ModelDefinition model, ItemDefinition item) {
+        return rawMesh(model, item, SEE_THROUGH);
+    }
+
+    /** A face this see-through or more (the game's alpha, 0 to 255) is left out of a mesh. */
+    private static final int SEE_THROUGH = 250;
+
+    private Mesh rawMesh(ModelDefinition model, ItemDefinition item, int seeThroughFrom) {
         if (item != null) {
             if (item.colorFind != null) {
                 for (int i = 0; i < item.colorFind.length; i++) {
@@ -207,7 +239,7 @@ final class ModelExporter {
         }
         mesh.groups.addAll(groups(model));
         for (int i = 0; i < model.faceCount; i++) {
-            boolean seeThrough = model.faceTransparencies != null && (model.faceTransparencies[i] & 0xff) >= 250;
+            boolean seeThrough = model.faceTransparencies != null && (model.faceTransparencies[i] & 0xff) >= seeThroughFrom;
             if (model.faceColors[i] == -2 || seeThrough) {
                 continue;
             }
@@ -217,6 +249,7 @@ final class ModelExporter {
             mesh.faces.add(new int[]{model.faceIndices1[i], model.faceIndices2[i], model.faceIndices3[i]});
             mesh.colours.add(rgb);
             mesh.sourceColours.add(model.faceColors[i] & 0xffff);
+            mesh.alphas.add(model.faceTransparencies == null ? 0 : model.faceTransparencies[i] & 0xff);
         }
         return mesh;
     }

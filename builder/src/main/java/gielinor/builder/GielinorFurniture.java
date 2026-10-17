@@ -521,16 +521,38 @@ final class GielinorFurniture {
     }
 
     /**
+     * A container for a room that has too few, against a wall, its front
+     * `facing` away from it: what the room's kind keeps things in (a
+     * kitchen's counters, a bedroom's drawers, a library's bookcases, a
+     * shop's shelves, a workshop's crates), else cupboards, shelves or
+     * crates. Null if there's none that faces so.
+     */
+    String container(String room, char facing, int hash) {
+        Kind kind = switch (room) {
+            case "kitchen" -> counter;
+            case "bedroom" -> drawers;
+            case "library" -> bookcase;
+            case "generalstore", "office", "bar" -> shelves;
+            case "blacksmith", "barn", "carpentryworkshop", "potteryworkshop", "tailoringworkshop", "church" -> crate;
+            default -> new Kind[]{cupboard, shelves, crate}[Math.floorMod(hash, 3)];
+        };
+        char way = kind.set.facing(facing, false);
+        return way == 0 ? null : kind.set.piece(way, hash).get(0).tile;
+    }
+
+    /**
      * A room's name, by what its furniture suggests (see {@link Kind}): the
      * room with the most weight, else {@link #DEFAULT_ROOM}. `tiles` are the
      * things standing in the room.
      */
     String roomName(Iterable<String> tiles) {
         Map<String, Integer> weight = new HashMap<>();
-        for (String t : tiles) {
-            Kind k = t == null ? null : votes.get(t);
-            if (k != null) {
-                weight.merge(k.room, k.weight, Integer::sum);
+        for (String stacked : tiles) {
+            for (String t : stacked == null ? new String[0] : stacked.split(java.util.regex.Pattern.quote(STACK))) {
+                Kind k = votes.get(t);
+                if (k != null) {
+                    weight.merge(k.room, k.weight, Integer::sum);
+                }
             }
         }
         String best = DEFAULT_ROOM;

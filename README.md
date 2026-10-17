@@ -85,11 +85,16 @@ The builder reads the cache with RuneLite's open-source cache library.
   raccoons and deer take the look of their Gielinor counterparts.
 - Map: the world of Gielinor, chosen at World Select (or `Map=Gielinor` on a
   server). The game's ground, its buildings on every floor with their walls,
-  doors, windows, stairs and roofs, its fences, trees, rocks and ore, and its
-  furniture as Zomboid's own: beds sleep, chairs seat, ranges cook, and
-  drawers, wardrobes, shelves, counters and crates hold loot. Rooms are named
-  by their furniture, so a kitchen's counters hold kitchen things and a
-  smithy's shelves hold metalwork.
+  doors, windows, stairs and pitched roofs, its fences, trees, rocks and ore,
+  and its furniture as Zomboid's own: beds sleep, chairs seat, ranges cook,
+  and drawers, wardrobes, shelves, counters and crates hold loot. Rooms are
+  named by their furniture, so a kitchen's counters hold kitchen things and a
+  smithy's shelves hold metalwork, and rooms short of containers get some.
+  What Zomboid has nothing like is drawn from the game's own models as the
+  mod's own tiles: fountains and wells (endless water), statues, stalls,
+  signs, banners, carts, crops, climbable ladders, and torches, lanterns and
+  candles that light up without power. Rooms the game leaves dark get
+  lanterns.
 - New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
   lobster and a jug of wine.
 

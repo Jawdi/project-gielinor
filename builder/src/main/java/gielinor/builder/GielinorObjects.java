@@ -127,21 +127,21 @@ final class GielinorObjects {
         private final int blocksX;
         private final Block[] blocks;
         private final List<String> tiles;
-        private final Map<String, Short> tileIndex;
+        private final Map<String, Integer> tileIndex;
 
         private static final class Block {
             final byte[] westStyle = new byte[BLOCK * BLOCK];
             final byte[] northStyle = new byte[BLOCK * BLOCK];
             final byte[] westGap = new byte[BLOCK * BLOCK];
             final byte[] northGap = new byte[BLOCK * BLOCK];
-            final short[] standing = new short[BLOCK * BLOCK];
+            final int[] standing = new int[BLOCK * BLOCK];
             /** Squares left without a floor, over stairs below. */
             final boolean[] open = new boolean[BLOCK * BLOCK];
             /** Squares given a floor, where stairs from below come out. */
             final boolean[] landing = new boolean[BLOCK * BLOCK];
         }
 
-        private Placed(int width, int height, List<String> tiles, Map<String, Short> tileIndex) {
+        private Placed(int width, int height, List<String> tiles, Map<String, Integer> tileIndex) {
             this.width = width;
             this.height = height;
             this.blocksX = (width + BLOCK - 1) / BLOCK;
@@ -153,7 +153,7 @@ final class GielinorObjects {
         /** {@link #LEVELS} levels sharing one list of tiles. */
         static Placed[] levels(int width, int height) {
             List<String> tiles = new ArrayList<>(List.of(""));
-            Map<String, Short> index = new HashMap<>();
+            Map<String, Integer> index = new HashMap<>();
             Placed[] out = new Placed[LEVELS];
             for (int z = 0; z < LEVELS; z++) {
                 out[z] = new Placed(width, height, tiles, index);
@@ -197,13 +197,19 @@ final class GielinorObjects {
             return b == null ? NONE : (west ? b.westGap : b.northGap)[at(x, y)];
         }
 
+        /** Adds a tile to what stands on a square, after whatever stands there already (see {@link GielinorFurniture#STACK}). */
+        void add(int x, int y, String tile) {
+            String there = standing(x, y);
+            stand(x, y, there == null ? tile : there + GielinorFurniture.STACK + tile);
+        }
+
         void stand(int x, int y, String tile) {
             if (!inside(x, y)) {
                 return;
             }
-            short t = tileIndex.computeIfAbsent(tile, k -> {
+            int t = tileIndex.computeIfAbsent(tile, k -> {
                 tiles.add(k);
-                return (short) (tiles.size() - 1);
+                return tiles.size() - 1;
             });
             block(x, y, true).standing[at(x, y)] = t;
         }
@@ -265,6 +271,7 @@ final class GielinorObjects {
     private final Map<Integer, WallKind> wallKinds = new HashMap<>();
     private final Map<String, Integer> counts = new TreeMap<>();
     private final GielinorFurniture furniture;
+    private final GielinorArt art;
 
     GielinorObjects(Store store, Path keysFile, TileDefinitions tiles) throws IOException {
         this.store = store;
@@ -273,6 +280,12 @@ final class GielinorObjects {
         this.objects = new ObjectManager(store);
         objects.load();
         this.models = new ModelExporter(store);
+        this.art = new GielinorArt(new GielinorTiles(), models, objects);
+    }
+
+    /** The things drawn as the mod's own tiles, and the tiles themselves (written once the map's built). */
+    GielinorArt art() {
+        return art;
     }
 
     GielinorFurniture furniture() {
@@ -301,6 +314,7 @@ final class GielinorObjects {
         List<int[]> doorObjects = new ArrayList<>();
         List<int[]> stairs = new ArrayList<>();
         List<GielinorFurniture.Furnishing> furnishings = new ArrayList<>();
+        List<GielinorArt.Thing> drawn = new ArrayList<>();
         for (int sx = GielinorMap.FIRST_SQUARE_X; sx <= GielinorMap.LAST_SQUARE_X; sx++) {
             for (int sy = GielinorMap.FIRST_SQUARE_Y; sy <= GielinorMap.LAST_SQUARE_Y; sy++) {
                 if (!keys.containsKey(sx << 8 | sy)) {
@@ -352,8 +366,10 @@ final class GielinorObjects {
                         stairs.add(new int[]{level, worldX, worldY, width, height});
                     } else if (furnishing != null) {
                         furnishings.add(new GielinorFurniture.Furnishing(level, worldX, worldY, width, height, turn, furnishing));
-                    } else if ((type == 10 || type == 11) && level == 0) {
-                        scenery(levels[0], ground, def, l, worldX, worldY);
+                    } else if ((type == 10 || type == 11) && level == 0 && scenery(levels[0], ground, def, l, worldX, worldY)) {
+                        // A tree, bush, plant or rock.
+                    } else if (GielinorArt.drawn(def, type)) {
+                        drawn.add(new GielinorArt.Thing(level, worldX, worldY, width, height, turn, type, def));
                     }
                 }
             }
@@ -407,6 +423,7 @@ final class GielinorObjects {
         placeDoors(levels, doorObjects, edges);
         placeStairs(levels, ground, stairs);
         furniture.place(levels, ground, furnishings, counts);
+        art.place(levels, drawn, counts);
         System.out.println("  objects: " + counts);
     }
 
@@ -857,14 +874,17 @@ final class GielinorObjects {
         return count;
     }
 
-    /** A tree, bush, plant or rock on the ground, one for each of the game's tiles it covers, somewhere on that tile. */
-    private void scenery(Placed placed, GielinorMap.GroundGrid ground, ObjectDefinition def, Location l, int worldX, int worldY) {
+    /**
+     * A tree, bush, plant or rock on the ground, one for each of the game's
+     * tiles it covers, somewhere on that tile. Returns whether it was one.
+     */
+    private boolean scenery(Placed placed, GielinorMap.GroundGrid ground, ObjectDefinition def, Location l, int worldX, int worldY) {
         if (rock(placed, ground, def, l, worldX, worldY)) {
-            return;
+            return true;
         }
         String[] choices = standingChoices(def);
         if (choices == null) {
-            return;
+            return false;
         }
         counts.merge(choices[0], 1, Integer::sum);
         int scale = GielinorMap.SCALE;
@@ -886,6 +906,7 @@ final class GielinorObjects {
                 placed.stand(sx, sy, choices[1 + Math.floorMod(hash >> 16, choices.length - 1)]);
             }
         }
+        return true;
     }
 
     /**

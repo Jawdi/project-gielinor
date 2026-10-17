@@ -277,6 +277,9 @@ public final class Main {
             "description=Built on this machine by the Project Gielinor content builder from your own game install. Not for sharing.",
             "modversion=0.1",
             "versionMin=42.0.0",
+            // The mod's own tiles (see GielinorTiles), written with the map.
+            "pack=" + GielinorTiles.PACK,
+            "tiledef=" + GielinorTiles.PACK + " " + GielinorTiles.FILE_NUMBER,
             ""));
 
         // Icons first: items whose icon won't render are left out. Weapons

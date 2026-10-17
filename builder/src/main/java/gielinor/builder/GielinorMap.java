@@ -345,7 +345,7 @@ final class GielinorMap {
                         cell.setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
                 }
-                rooms(cell, ground, levels);
+                rooms(cell, ground, levels, objects.furniture());
                 cell.write(dir);
             }
         }
@@ -354,7 +354,7 @@ final class GielinorMap {
         writeSpawnPoints(dir, startX, startY);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
         System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts + ", " + gaps + " gaps filled, "
-            + roomCount + " rooms in " + buildingCount + " buildings, " + upperFloors + " tiles of upper floors");
+            + roomCount + " rooms in " + buildingCount + " buildings " + roomNames + ", " + upperFloors + " tiles of upper floors");
     }
 
     /**
@@ -388,9 +388,11 @@ final class GielinorMap {
         }
         String thing = placed.standing(x, y);
         if (thing != null && dry) {
-            tiles.add(thing);
-            if (solid(thing)) {
-                bits |= MapCell.BIT_SOLID;
+            for (String t : thing.split(java.util.regex.Pattern.quote(GielinorFurniture.STACK))) {
+                tiles.add(t);
+                if (solid(t)) {
+                    bits |= MapCell.BIT_SOLID;
+                }
             }
         }
         return bits;
@@ -433,11 +435,9 @@ final class GielinorMap {
     private static final String SLATE_ROOF = "roofs_01_22";
     /** Roofs by the colour of the game's roof: slate (grey or blue), red tiles, brown (thatch, wood) and green. */
     static final String[] ROOF_TILES = {"roofs_01_22", "roofs_04_22", "roofs_03_22", "roofs_05_22"};
-    /** The room name for now: the rooms hold nothing yet that their name would choose. */
-    private static final String ROOM = "gielinor";
-
     private static int roomCount;
     private static int buildingCount;
+    private static final Map<String, Integer> roomNames = new java.util.TreeMap<>();
 
     /**
      * The bits a level above the ground has at a tile (see
@@ -461,11 +461,12 @@ final class GielinorMap {
     /**
      * The cell's rooms and buildings: on each level, a room is the indoor
      * squares reached from one another without crossing a wall (or a door),
-     * written as rectangles; a building the rooms whose squares touch, walls
-     * or not, and those above and below one another. A building across a
-     * cell's edge is one in each cell.
+     * written as rectangles and named by its furniture (Zomboid fills its
+     * containers by its name); a building the rooms whose squares touch,
+     * walls or not, and those above and below one another. A building across
+     * a cell's edge is one in each cell.
      */
-    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed[] levels) {
+    private static void rooms(MapCell cell, GroundGrid ground, GielinorObjects.Placed[] levels, GielinorFurniture furniture) {
         int size = MapCell.SIZE;
         int x0 = cell.cellX * size;
         int y0 = cell.cellY * size;
@@ -500,7 +501,13 @@ final class GielinorMap {
                         queue[tail++] = nx + ny * size;
                     }
                 }
-                int id = cell.addRoom(ROOM, z, rectangles(squares, size));
+                List<String> things = new java.util.ArrayList<>();
+                for (int i : squares) {
+                    things.add(levels[z].standing(x0 + i % size, y0 + i / size));
+                }
+                String name = furniture.roomName(things);
+                roomNames.merge(name, 1, Integer::sum);
+                int id = cell.addRoom(name, z, rectangles(squares, size));
                 for (int i : squares) {
                     here[i] = id;
                 }

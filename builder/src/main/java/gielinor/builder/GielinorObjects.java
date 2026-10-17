@@ -22,8 +22,9 @@ import net.runelite.cache.region.RegionLoader;
 
 /**
  * The things standing in the game's world: walls, fences, doors, gates and
- * windows along the edges of its tiles, on every floor, and trees, bushes,
- * plants and rocks on its ground, each as Zomboid's own (so its doors open,
+ * windows along the edges of its tiles, stairs and furniture (see
+ * {@link GielinorFurniture}) on every floor, and trees, bushes, plants and
+ * rocks on its ground, each as Zomboid's own (so its doors open,
  * its trees are chopped and grow through the seasons, its fences are
  * climbed). Read from the game's map squares (each square's objects are
  * locked with a key, see {@link Pinned#keys}).
@@ -44,7 +45,9 @@ import net.runelite.cache.region.RegionLoader;
  * a leaf of a double door the other, whichever lands in the wall's gap). A
  * tile is two Zomboid squares across: a single door takes one of them and
  * the wall the other; two doors side by side are a double door across four,
- * as Zomboid's own double gates are.
+ * as Zomboid's own double gates are. Some of the game's doors have no name
+ * and can't be opened, a castle's doors standing open for good: a nameless
+ * piece of wall standing alone that would swing shut into a doorway is one.
  */
 final class GielinorObjects {
     /** A wall's look: which of Zomboid's wall tiles it's made of. */
@@ -251,8 +254,12 @@ final class GielinorObjects {
     private record WallKind(Style style, boolean window) {
     }
 
-    /** A wall on the map: its level, tile, shape (0 straight, 2 corner, 9 diagonal) and turn. */
-    private record Wall(int level, int x, int y, int shape, int turn, WallKind kind) {
+    /** A wall on the map: its object, level, tile, shape (0 straight, 2 corner, 9 diagonal) and turn. */
+    private record Wall(int id, int level, int x, int y, int shape, int turn, WallKind kind) {
+        /** The tile's sides it stands along: one for a straight wall, two for a corner, none for a diagonal. */
+        int[] sides() {
+            return shape == 9 ? new int[0] : shape == 2 ? new int[]{turn, (turn + 1) & 3} : new int[]{turn};
+        }
     }
 
     /** A door's or gate's edge, where it closes: its level, tile and side (0 west, 1 north), the side's tile normalised as {@link #edgeKey} has it. */
@@ -265,13 +272,19 @@ final class GielinorObjects {
     private final ModelExporter models;
     private final Map<Integer, WallKind> wallKinds = new HashMap<>();
     private final Map<String, Integer> counts = new TreeMap<>();
+    private final GielinorFurniture furniture;
 
-    GielinorObjects(Store store, Path keysFile) throws IOException {
+    GielinorObjects(Store store, Path keysFile, TileDefinitions tiles) throws IOException {
         this.store = store;
+        this.furniture = new GielinorFurniture(tiles);
         this.keys = readKeys(keysFile);
         this.objects = new ObjectManager(store);
         objects.load();
         this.models = new ModelExporter(store);
+    }
+
+    GielinorFurniture furniture() {
+        return furniture;
     }
 
     /** The map keys (OpenRS2's keys.json): each map square's four-int key, by square id. */
@@ -295,6 +308,7 @@ final class GielinorObjects {
         List<Wall> walls = new ArrayList<>();
         List<int[]> doorObjects = new ArrayList<>();
         List<int[]> stairs = new ArrayList<>();
+        List<GielinorFurniture.Furnishing> furnishings = new ArrayList<>();
         for (int sx = GielinorMap.FIRST_SQUARE_X; sx <= GielinorMap.LAST_SQUARE_X; sx++) {
             for (int sy = GielinorMap.FIRST_SQUARE_Y; sy <= GielinorMap.LAST_SQUARE_Y; sy++) {
                 if (!keys.containsKey(sx << 8 | sy)) {
@@ -319,16 +333,20 @@ final class GielinorObjects {
                         continue;
                     }
                     int type = l.getType();
+                    int turn = l.getOrientation() & 3;
+                    int width = turn % 2 == 0 ? def.getSizeX() : def.getSizeY();
+                    int height = turn % 2 == 0 ? def.getSizeY() : def.getSizeX();
+                    GielinorFurniture.Kind furnishing = type == 10 || type == 11 ? furniture.kind(name(def), width, height) : null;
                     if (type == 0 || type == 2 || type == 9) {
                         if (isDoor(def)) {
                             if (type == 0) {
-                                doorObjects.add(new int[]{level, worldX, worldY, l.getOrientation() & 3, l.getId()});
+                                doorObjects.add(new int[]{level, worldX, worldY, turn, l.getId()});
                             }
                             continue;
                         }
                         WallKind kind = wallKind(def);
                         if (kind != null) {
-                            walls.add(new Wall(level, worldX, worldY, type, l.getOrientation() & 3, kind));
+                            walls.add(new Wall(l.getId(), level, worldX, worldY, type, turn, kind));
                         }
                     } else if (type >= 12 && type <= 21) {
                         // A roof covers the tile on the level below it.
@@ -336,29 +354,66 @@ final class GielinorObjects {
                             roofMaterial(def, type));
                         counts.merge("roof tiles", 1, Integer::sum);
                     } else if ((type == 10 || type == 11) && isStaircase(def)) {
-                        boolean turned = (l.getOrientation() & 1) == 1;
-                        stairs.add(new int[]{level, worldX, worldY, turned ? def.getSizeY() : def.getSizeX(), turned ? def.getSizeX() : def.getSizeY()});
+                        stairs.add(new int[]{level, worldX, worldY, width, height});
+                    } else if (furnishing != null) {
+                        furnishings.add(new GielinorFurniture.Furnishing(level, worldX, worldY, width, height, turn, furnishing));
                     } else if ((type == 10 || type == 11) && level == 0) {
                         scenery(levels[0], ground, def, l, worldX, worldY);
                     }
                 }
             }
         }
-        // The walls, and where each edge's wall is, for the doors to find their gaps.
+        // Where each edge's wall is, for the doors to find their gaps.
         Map<Long, Style> edges = new HashMap<>();
         for (Wall w : walls) {
+            for (int side : w.sides()) {
+                edges.put(edgeKey(w.level, w.x, w.y, side), w.kind.style);
+            }
+        }
+        // Nameless doors left standing open are doors, not walls: a solid
+        // piece of a building's wall that closes into a doorway with wall
+        // either side of it, or wall on one side and the other leaf of a
+        // double door on the other.
+        Map<Long, Door> shutAt = new HashMap<>();
+        Map<Long, Wall> shutBy = new HashMap<>();
+        for (Wall w : walls) {
+            boolean leaf = w.shape == 0 && w.kind.style.building() && !w.kind.window && nameless(objects.getObject(w.id));
+            Door d = leaf ? shutPlace(edges, w) : null;
+            if (d != null) {
+                shutAt.put(edgeKey(d), d);
+                shutBy.put(edgeKey(d), w);
+            }
+        }
+        List<Wall> opened = new ArrayList<>();
+        for (Map.Entry<Long, Door> e : shutAt.entrySet()) {
+            Door d = e.getValue();
+            boolean before = edges.containsKey(along(d, -1)) || shutAt.containsKey(along(d, -1));
+            boolean after = edges.containsKey(along(d, 1)) || shutAt.containsKey(along(d, 1));
+            if (before && after) {
+                opened.add(shutBy.get(e.getKey()));
+            }
+        }
+        for (Wall w : opened) {
+            edges.remove(edgeKey(w.level, w.x, w.y, w.turn));
+            doorObjects.add(new int[]{w.level, w.x, w.y, w.turn, w.id});
+        }
+        counts.merge("doors standing open", opened.size(), Integer::sum);
+        java.util.Set<Wall> doors = new java.util.HashSet<>(opened);
+        for (Wall w : walls) {
+            if (doors.contains(w)) {
+                continue;
+            }
             counts.merge(w.kind.window ? "windows" : w.kind.style.name().toLowerCase(Locale.ROOT), 1, Integer::sum);
             if (w.shape == 9) {
                 diagonal(levels[w.level], w);
-                continue;
             }
-            for (int side : w.shape == 2 ? new int[]{w.turn, (w.turn + 1) & 3} : new int[]{w.turn}) {
-                edges.put(edgeKey(w.level, w.x, w.y, side), w.kind.style);
+            for (int side : w.sides()) {
                 side(levels[w.level], w.x, w.y, side, w.kind.style, w.kind.window ? WINDOW : NONE);
             }
         }
         placeDoors(levels, doorObjects, edges);
         placeStairs(levels, stairs);
+        furniture.place(levels, ground, furnishings, counts);
         System.out.println("  objects: " + counts);
     }
 
@@ -463,6 +518,46 @@ final class GielinorObjects {
         return opens(def) || closes(def) || name.contains("door") || name.contains("gate");
     }
 
+    private static boolean nameless(ObjectDefinition def) {
+        String name = name(def);
+        return name.isEmpty() || name.equals("null");
+    }
+
+    /**
+     * Where a nameless piece of wall would close if it were a door left
+     * standing open: nothing continues its line either way, and swung shut
+     * (see {@link #swungShut}) it lands in a gap in a wall, with wall on at
+     * least one side. Null if it isn't one.
+     */
+    private Door shutPlace(Map<Long, Style> edges, Wall w) {
+        Door here = door(w.level, w.x, w.y, w.turn, false);
+        if (edges.containsKey(along(here, 1)) || edges.containsKey(along(here, -1))) {
+            return null;
+        }
+        for (int[] c : swungShut(objects.getObject(w.id), w.x, w.y, w.turn)) {
+            Door shut = door(w.level, c[0], c[1], c[2], false);
+            if (!edges.containsKey(edgeKey(shut)) && (edges.containsKey(along(shut, 1)) || edges.containsKey(along(shut, -1)))) {
+                return shut;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Where a door stored open closes: its tile and side, as the game turns
+     * it back, a single door one way and a leaf of a double door the other
+     * (which is which isn't stored, so both).
+     */
+    private static List<int[]> swungShut(ObjectDefinition def, int x, int y, int turn) {
+        boolean flip = def.isRotated();
+        int[] singleX = {0, 1, 0, -1};
+        int[] singleY = {1, 0, -1, 0};
+        int[] pairX = flip ? new int[]{0, 1, 0, -1} : new int[]{0, -1, 0, 1};
+        int[] pairY = flip ? new int[]{-1, 0, 1, 0} : new int[]{1, 0, -1, 0};
+        return List.of(new int[]{x + singleX[turn], y + singleY[turn], (turn + (flip ? 1 : 3)) & 3},
+            new int[]{x + pairX[turn], y + pairY[turn], (turn + (flip ? 3 : 1)) & 3});
+    }
+
     private static String name(ObjectDefinition def) {
         return def.getName() == null ? "" : def.getName().toLowerCase(Locale.ROOT);
     }
@@ -522,19 +617,10 @@ final class GielinorObjects {
             int x = o[1];
             int y = o[2];
             int turn = o[3];
-            List<int[]> candidates = new ArrayList<>();
-            if (closes(def) && !opens(def)) {
-                // Stored open: back into the doorway it swung out of.
-                boolean flip = def.isRotated();
-                int[] single = {0, 1, 0, -1};
-                int[] singleY = {1, 0, -1, 0};
-                candidates.add(new int[]{x + single[turn], y + singleY[turn], (turn + (flip ? 1 : 3)) & 3});
-                int[] pairX = flip ? new int[]{0, 1, 0, -1} : new int[]{0, -1, 0, 1};
-                int[] pairY = flip ? new int[]{-1, 0, 1, 0} : new int[]{1, 0, -1, 0};
-                candidates.add(new int[]{x + pairX[turn], y + pairY[turn], (turn + (flip ? 3 : 1)) & 3});
-            } else {
-                candidates.add(new int[]{x, y, turn});
-            }
+            // Stored open (it closes but doesn't open, or it's a nameless
+            // door left open): back into the doorway it swung out of.
+            boolean open = closes(def) && !opens(def) || nameless(def) && !closes(def) && !opens(def);
+            List<int[]> candidates = open ? swungShut(def, x, y, turn) : List.of(new int[]{x, y, turn});
             int[] best = null;
             int bestScore = Integer.MIN_VALUE;
             for (int[] c : candidates) {

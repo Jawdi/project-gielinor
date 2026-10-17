@@ -1,7 +1,10 @@
 name=Project Gielinor
 id=ProjectGielinor
-description=Gielinor's items, skills and creatures in Project Zomboid. Needs the Project Gielinor content pack, which you build from your own game install with the Project Gielinor Content Builder.
-require=\ProjectGielinorContent
+description=Gielinor's items, skills, creatures and world in Project Zomboid. Its content pack is built from the game's own files on your computer, from the main menu, the first time you play. Needs ZombieBuddy.
+require=\ZombieBuddy
 loadModAfter=\ProjectGielinorContent
 modversion=0.1
 versionMin=42.0.0
+javaJarFile=media/java/ProjectGielinor.jar
+javaPkgName=gielinor.mod
+ZBVersionMin=2.3.4

@@ -10,7 +10,7 @@ local function report()
         end
     end
     if count == 0 then
-        print("Project Gielinor: no items found. Build the content pack with the Project Gielinor Content Builder.")
+        print("Project Gielinor: no items found. Build the content pack from the main menu.")
     else
         print("Project Gielinor: " .. count .. " items registered; e.g. " .. tostring(getItemNameFromFullType("Gielinor.BronzeAxe")))
     end

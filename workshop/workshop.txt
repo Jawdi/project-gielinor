@@ -1,0 +1,26 @@
+version=1
+title=Project Gielinor
+description=Gielinor's items, skills, creatures and world in Project Zomboid, played with Zomboid's own character, survival, UI and zombies.
+description=
+description=An early test build. Expect rough edges, and start a new world after each update.
+description=
+description=[h2]Requirements[/h2]
+description=[list]
+description=[*]Project Zomboid, Build 42.
+description=[*]ZombieBuddy, with its Java part installed as its Workshop page describes. Project Gielinor's own Java runs through it.
+description=[*]An internet connection the first time you play.
+description=[/list]
+description=
+description=[h2]First start[/h2]
+description=Enable Project Gielinor (ZombieBuddy is switched on with it). ZombieBuddy asks once whether Project Gielinor's Java may run: allow it.
+description=
+description=On the main menu, Project Gielinor offers to build its content pack: Gielinor's items, people, creatures and world, made on your computer from the game's own files, which it downloads once (about 190 MB) from the OpenRS2 archive. It takes several minutes. When it's done the mods reload with the pack switched on. Then start a new game and pick Gielinor at World Select.
+description=
+description=None of Jagex's files come with this mod. The content pack stays on your computer: please don't share or upload it.
+description=
+description=[h2]Servers[/h2]
+description=Install ZombieBuddy's Java part on the server too, and set Mods=ZombieBuddy;ProjectGielinorContent;ProjectGielinor and Map=Gielinor. The server builds its own pack on its first start (and after an update). Players build theirs from the main menu before joining.
+description=
+description=A fan project, not affiliated with or endorsed by Jagex or The Indie Stone. Old School RuneScape and RuneScape are trademarks of Jagex Ltd.; Project Zomboid is a trademark of The Indie Stone.
+tags=Build 42;Map;Items;Clothing/Armor;Models;Textures;WIP
+visibility=unlisted

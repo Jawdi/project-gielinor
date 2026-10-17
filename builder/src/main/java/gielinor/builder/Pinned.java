@@ -46,7 +46,8 @@ final class Pinned {
     static File cache() throws IOException, InterruptedException {
         Path dir = store().resolve("cache-" + CACHE);
         if (!Locations.isCache(dir.toFile())) {
-            Path zip = fetch(ARCHIVE + CACHE + "/disk.zip", store().resolve("cache-" + CACHE + ".zip"), "the game cache (about 190 MB, once)");
+            Path zip = fetch(ARCHIVE + CACHE + "/disk.zip", store().resolve("cache-" + CACHE + ".zip"), "the game cache");
+            Main.step("Extracting the game cache");
             unpack(zip, dir);
             Files.delete(zip);
             if (!Locations.isCache(dir.toFile())) {
@@ -65,17 +66,38 @@ final class Pinned {
         return file;
     }
 
-    /** Downloads `url` to `target` (by way of a temporary file, so a broken download leaves nothing behind). */
+    /**
+     * Downloads `url` to `target` (by way of a temporary file, so a broken
+     * download leaves nothing behind), reporting each few megabytes.
+     */
     private static Path fetch(String url, Path target, String what) throws IOException, InterruptedException {
-        System.out.println("Downloading " + what + " from the OpenRS2 archive...");
+        Main.step("Downloading " + what + " from the OpenRS2 archive");
         Files.createDirectories(target.getParent());
         Path partial = target.resolveSibling(target.getFileName() + ".part");
         HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
-        HttpResponse<Path> response = client.send(HttpRequest.newBuilder(URI.create(url)).build(),
-            HttpResponse.BodyHandlers.ofFile(partial));
-        if (response.statusCode() != 200) {
+        HttpResponse<InputStream> response = client.send(HttpRequest.newBuilder(URI.create(url)).build(),
+            HttpResponse.BodyHandlers.ofInputStream());
+        try (InputStream in = response.body()) {
+            if (response.statusCode() != 200) {
+                throw new IOException("Couldn't download " + url + " (HTTP " + response.statusCode() + ")");
+            }
+            long size = response.headers().firstValueAsLong("content-length").orElse(-1);
+            try (java.io.OutputStream out = Files.newOutputStream(partial)) {
+                byte[] buffer = new byte[1 << 16];
+                long done = 0;
+                long reported = 0;
+                for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
+                    out.write(buffer, 0, n);
+                    done += n;
+                    if (done - reported >= 5 << 20) {
+                        reported = done;
+                        Main.step("Downloading " + what + ": " + (done >> 20) + (size > 0 ? " of " + (size >> 20) : "") + " MB");
+                    }
+                }
+            }
+        } catch (IOException e) {
             Files.deleteIfExists(partial);
-            throw new IOException("Couldn't download " + url + " (HTTP " + response.statusCode() + ")");
+            throw e;
         }
         Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING);
         return target;

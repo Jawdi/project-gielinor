@@ -76,23 +76,36 @@ public final class Main {
         System.out.println("zomboid: " + zomboid);
         System.out.println("output:  " + out);
 
+        step("Reading Zomboid's items");
         ZomboidItems.Scripts scripts = ZomboidItems.load(zomboid);
         try (Store store = new Store(cache)) {
+            step("Reading the game's items");
             store.load();
             ItemManager items = new ItemManager(store);
             items.load();
             IconRenderer icons = new IconRenderer(store, items);
             ItemModels itemModels = new ItemModels(new ModelExporter(store), scripts, zomboid);
+            step("Choosing items");
             List<Built> built = build(items, scripts.items(), out.toPath().resolve("item-report.txt"));
             NpcManager npcs = new NpcManager(store);
             npcs.load();
             writePack(out.toPath(), built, icons, itemModels, npcs, scripts, zomboid);
             // Zomboid finds a mod's maps in its common folder (and only looks in
             // the version folder if the common one has maps too).
+            step("The map: reading the game's world");
             TileDefinitions tiles = TileDefinitions.read(zomboid.toPath());
             GielinorMap.write(out.toPath().resolve("common/media"), tiles, new GielinorTerrain(store),
                 new GielinorObjects(store, Pinned.keys(), tiles));
         }
+        step("Done");
+    }
+
+    /**
+     * Reports a step of the build. Step lines start with "# ", which tells
+     * them from the details: the mod's build window shows only these.
+     */
+    static void step(String what) {
+        System.out.println("# " + what);
     }
 
     /**
@@ -282,6 +295,7 @@ public final class Main {
             "tiledef=" + GielinorTiles.PACK + " " + GielinorTiles.FILE_NUMBER,
             ""));
 
+        step("Items: icons and models");
         // Icons first: items whose icon won't render are left out. Weapons
         // get their own held models, everything else its ground model.
         StringBuilder models = new StringBuilder("module " + MODULE + "\n{\n    imports\n    {\n        Base\n    }\n");
@@ -346,7 +360,9 @@ public final class Main {
         models.append("}\n");
         Files.writeString(media.resolve("scripts/gielinor_models.txt"), models, StandardCharsets.UTF_8);
         Files.writeString(media.resolve("clothing/clothing.xml"), zombieOutfits(media), StandardCharsets.UTF_8);
+        step("Clothing, bodies and zombies");
         Files.writeString(media.resolve("scripts/gielinor_wardrobe.txt"), Wardrobe.write(itemModels, media, zomboid.toPath()), StandardCharsets.UTF_8);
+        step("Animals");
         Files.writeString(media.resolve("scripts/gielinor_animals.txt"), animals(npcs, itemModels, scripts, zomboid, media), StandardCharsets.UTF_8);
         itemModels.writeGuidTable(media);
 

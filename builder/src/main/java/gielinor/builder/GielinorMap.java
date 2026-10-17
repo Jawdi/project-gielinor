@@ -374,6 +374,7 @@ final class GielinorMap {
         int width = ground.width;
         int height = ground.height;
         GielinorObjects.Placed[] levels = GielinorObjects.Placed.levels(width, height);
+        Main.step("The map: buildings, furniture and scenery");
         objects.place(levels, ground, terrain);
         int roofHoles = ground.fillRoofHoles();
         GielinorObjects.Placed placed = levels[0];
@@ -381,8 +382,14 @@ final class GielinorMap {
         int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
         int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
         int startY = height - (START_Y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
+        int percent = -1;
         for (int cx = 0; cx < cellsX; cx++) {
             for (int cy = 0; cy < cellsY; cy++) {
+                int done = 100 * (cx * cellsY + cy) / (cellsX * cellsY);
+                if (done != percent) {
+                    percent = done;
+                    Main.step("The map: cells, " + done + "%");
+                }
                 MapCell cell = new MapCell(cx, cy);
                 GielinorRoofs roofs = new GielinorRoofs(ground, levels, cx * MapCell.SIZE, cy * MapCell.SIZE, MapCell.SIZE);
                 for (int x = 0; x < MapCell.SIZE; x++) {
@@ -450,10 +457,12 @@ final class GielinorMap {
                 cell.write(dir);
             }
         }
+        Main.step("The map: packing the mod's own tiles");
         objects.art().tiles().write(media);
         System.out.println("  own tiles: " + objects.art().tiles().size() + ", " + lanterns + " lanterns and " + containers
             + " containers added to rooms");
         writeInfo(dir);
+        Main.step("The world map");
         writeWorldMap(dir, ground, cellsX, cellsY);
         writeSpawnPoints(dir, startX, startY);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);

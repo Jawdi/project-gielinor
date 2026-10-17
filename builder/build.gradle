@@ -17,11 +17,110 @@ repositories {
     maven { url = 'https://repo.runelite.net' }
 }
 
+// Project Zomboid's install folder: -Pzomboid=<folder>, ZOMBOID_HOME, or
+// Steam's usual library folders. The mod's Java compiles against the game.
+def zomboidHome = {
+    def given = findProperty('zomboid') ?: System.getenv('ZOMBOID_HOME')
+    if (given) {
+        return file(given)
+    }
+    def home = System.getProperty('user.home')
+    def candidates = ('A'..'Z').collectMany { drive ->
+        ['SteamLibrary', 'Program Files (x86)/Steam', 'Program Files/Steam', 'Steam'].collect { "$drive:/$it/steamapps/common/ProjectZomboid" }
+    } + ["$home/.steam/steam/steamapps/common/ProjectZomboid", "$home/.local/share/Steam/steamapps/common/ProjectZomboid"]
+    return candidates.collect { file(it) }.find { new File(it, 'projectzomboid.jar').isFile() }
+}()
+
+sourceSets {
+    // The mod's own Java, which ZombieBuddy loads into the game: it runs the
+    // builder from the main menu (or on a server's first start).
+    mod
+}
+
 dependencies {
     implementation 'net.runelite:cache:1.13.1'
+    if (zomboidHome != null) {
+        modCompileOnly files("$zomboidHome/projectzomboid.jar")
+    }
+}
+
+// The game runs on Java 25 and its classes need that to compile against.
+tasks.named('compileModJava') {
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) }
+    doFirst {
+        if (zomboidHome == null) {
+            throw new GradleException("Project Zomboid wasn't found. Pass -Pzomboid=<install folder> or set ZOMBOID_HOME.")
+        }
+    }
 }
 
 application {
     mainClass = 'gielinor.builder.Main'
 }
 
+// The builder as one runnable jar, for the mod to ship and run.
+def builderJar = tasks.register('builderJar', Jar) {
+    archiveFileName = 'ProjectGielinorBuilder.jar'
+    manifest {
+        attributes 'Main-Class': application.mainClass.get()
+    }
+    from sourceSets.main.output
+    // Left out of the cache library's dependencies: what only parts of it the
+    // builder doesn't use need (ANTLR for its script assembler, Commons CLI
+    // for its command line), annotations only the compiler reads, and JNA's
+    // native libraries (the library only calls them for native compression,
+    // which the builder never asks for, though its classes must be there).
+    def unused = ['antlr4-runtime-', 'commons-cli-', 'jsr305-', 'error_prone_annotations-', 'j2objc-annotations-',
+                  'animal-sniffer-annotations-']
+    from {
+        configurations.runtimeClasspath.filter { jar -> !unused.any { jar.name.startsWith(it) } }.collect { zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/versions/**', 'module-info.class'
+    exclude '**/*.dll', '**/*.so', '**/*.jnilib', '**/*.dylib', '**/*.a'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+def modJar = tasks.register('modJar', Jar) {
+    archiveFileName = 'ProjectGielinor.jar'
+    from sourceSets.mod.output
+}
+
+// The mod as players get it: its files, the mod's Java and the builder.
+def modFiles = copySpec {
+    from('../mod/ProjectGielinor')
+    into('42/media/java') {
+        from modJar
+    }
+    into('42/media/builder') {
+        from builderJar
+    }
+}
+
+def zomboidUser = file("${System.getProperty('user.home')}/Zomboid")
+
+tasks.register('installMod', Sync) {
+    description = 'Puts the mod in Zomboid\'s mods folder, to play it locally.'
+    with modFiles
+    into new File(zomboidUser, 'mods/ProjectGielinor')
+}
+
+tasks.register('workshop', Sync) {
+    description = 'Lays the mod out as a Steam Workshop item, ready to upload from the game\'s Workshop screen.'
+    def item = new File(zomboidUser, 'Workshop/ProjectGielinor')
+    // The game writes the item's Workshop id into workshop.txt on its first
+    // upload, and later uploads update the item with that id: keep it.
+    def published = ''
+    doFirst {
+        def txt = new File(item, 'workshop.txt')
+        published = txt.isFile() ? (txt.readLines().find { it.startsWith('id=') } ?: '') : ''
+    }
+    from('../workshop') {
+        filesMatching('workshop.txt') {
+            filter { line -> line.startsWith('version=') && published ? "$line\n$published" : line }
+        }
+    }
+    into('Contents/mods/ProjectGielinor') {
+        with modFiles
+    }
+    into item
+}

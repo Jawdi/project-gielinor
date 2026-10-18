@@ -9,11 +9,14 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import se.krka.kahlua.integration.annotations.LuaMethod;
@@ -28,8 +31,8 @@ import zombie.gameStates.ChooseGameInfo;
  * The content builder ships beside this jar as a jar of its own and runs as
  * a separate Java process with the game's own Java, so its memory, and
  * anything that goes wrong in it, stay out of the game. It builds into a
- * folder of its own that takes the pack's place only once it has finished,
- * so a failed build leaves the last pack as it was. Each pack records which
+ * folder of its own whose files replace the pack's only once it has
+ * finished, so a failed build leaves the last pack as it was. Each pack records which
  * builder made it; a pack from any other builder (an older version of the
  * mod) is out of date.
  */
@@ -48,7 +51,9 @@ public final class ContentBuild {
     private static final String STEP = "# ";
 
     private static final Object LOCK = new Object();
-    /** The running build, or null. */
+    /** Whether a build is running or being put in place. */
+    private static boolean busy;
+    /** The builder while it runs, or null. */
     private static Process process;
     /** The step the build is on, or why it failed. */
     private static volatile String progress = "";
@@ -75,7 +80,7 @@ public final class ContentBuild {
     @LuaMethod(name = "gielinorContentState", global = true)
     public static String state() {
         synchronized (LOCK) {
-            if (process != null) {
+            if (busy) {
                 return "building";
             }
         }
@@ -120,58 +125,71 @@ public final class ContentBuild {
         }
     }
 
-    /** Starts building the pack in the background. False if a build is already running or it couldn't start. */
+    /** Starts building the pack in the background. False if a build is already running. */
     @LuaMethod(name = "gielinorBuildContent", global = true)
     public static boolean build() {
-        synchronized (LOCK) {
-            if (process != null) {
-                return false;
-            }
-            failed = false;
-            progress = "Starting";
-            try {
-                Path out = prepare();
-                Process started = start(out);
-                process = started;
-                Thread watcher = new Thread(() -> finish(started, out, line -> { }), "Project Gielinor content build");
-                watcher.setDaemon(true);
-                watcher.start();
-                return true;
-            } catch (IOException e) {
-                fail("Couldn't start the build: " + e.getMessage());
-                return false;
-            }
+        if (!begin()) {
+            return false;
         }
+        Thread worker = new Thread(() -> run(line -> { }), "Project Gielinor content build");
+        worker.setDaemon(true);
+        worker.start();
+        return true;
     }
 
     /** Builds the pack and waits for it, passing each line of the builder's output on. True if it was built. */
     static boolean buildAndWait(Consumer<String> output) {
-        synchronized (LOCK) {
-            if (process != null) {
-                return false;
-            }
-            failed = false;
-            progress = "Starting";
+        if (!begin()) {
+            return false;
         }
-        try {
-            Path out = prepare();
-            Process started = start(out);
-            synchronized (LOCK) {
-                process = started;
-            }
-            finish(started, out, output);
-        } catch (IOException e) {
-            fail("Couldn't start the build: " + e.getMessage());
-        }
+        run(output);
         return !failed;
     }
 
-    /** Empties the build's own folder; returns where the new pack goes in it. */
-    private static Path prepare() throws IOException {
-        Path work = work();
-        deleteTree(work);
-        Files.createDirectories(work);
-        return work.resolve(PACK_ID);
+    private static boolean begin() {
+        synchronized (LOCK) {
+            if (busy) {
+                return false;
+            }
+            busy = true;
+            failed = false;
+            progress = "Starting";
+            return true;
+        }
+    }
+
+    /**
+     * Builds the pack and puts it in place. A finished build from this same
+     * builder that didn't get put in place (say the game was closed first)
+     * is put in place without building it again.
+     */
+    private static void run(Consumer<String> output) {
+        Path out = work().resolve(PACK_ID);
+        try {
+            if (!stampedByThisBuilder(out)) {
+                deleteTree(work());
+                Files.createDirectories(work());
+                Process running = start(out);
+                synchronized (LOCK) {
+                    process = running;
+                }
+                follow(running, output);
+                Files.writeString(out.resolve(STAMP), builderHash() + "\n", StandardCharsets.UTF_8);
+            }
+            progress = "Putting the pack in place";
+            install(out);
+            progress = "Done";
+            synchronized (LOCK) {
+                reloaded = false;
+            }
+        } catch (IOException | InterruptedException e) {
+            fail("The build stopped (" + e.getMessage() + ")");
+        } finally {
+            synchronized (LOCK) {
+                process = null;
+                busy = false;
+            }
+        }
     }
 
     private static Process start(Path out) throws IOException {
@@ -186,11 +204,10 @@ public final class ContentBuild {
     }
 
     /**
-     * Follows a running build to its end: keeps its output in the log, its
-     * latest step in {@link #progress}, and once it has finished stamps the
-     * new pack and puts it in the old one's place.
+     * Follows a running build to its end, keeping its output in the log and
+     * its latest step in {@link #progress}. Throws if it didn't finish.
      */
-    private static void finish(Process running, Path out, Consumer<String> output) {
+    private static void follow(Process running, Consumer<String> output) throws IOException, InterruptedException {
         String last = "";
         try (PrintWriter log = new PrintWriter(Files.newBufferedWriter(work().resolve("log.txt"), StandardCharsets.UTF_8), true);
                 InputStream stream = running.getInputStream();
@@ -204,36 +221,66 @@ public final class ContentBuild {
                     last = line.trim();
                 }
             }
-            int code = running.waitFor();
-            if (code != 0) {
-                fail("The build stopped (" + (last.isEmpty() ? "exit code " + code : last) + ")");
-                return;
-            }
-            Files.writeString(out.resolve(STAMP), builderHash() + "\n", StandardCharsets.UTF_8);
-            replacePack(out);
-            progress = "Done";
-            synchronized (LOCK) {
-                reloaded = false;
-            }
-        } catch (IOException | InterruptedException e) {
-            fail("The build stopped (" + e.getMessage() + ")");
-        } finally {
-            synchronized (LOCK) {
-                process = null;
-            }
+        }
+        int code = running.waitFor();
+        if (code != 0) {
+            throw new IOException(last.isEmpty() ? "exit code " + code : last);
         }
     }
 
-    /** Moves a freshly built pack into the mods folder, the old one out of the way first and then away. */
-    private static void replacePack(Path built) throws IOException {
-        Path pack = pack();
-        Path old = work().resolve("old");
-        if (Files.exists(pack)) {
-            Files.move(pack, old);
+    private static boolean stampedByThisBuilder(Path pack) {
+        try {
+            return Files.readString(pack.resolve(STAMP), StandardCharsets.UTF_8).trim().equals(builderHash());
+        } catch (IOException e) {
+            return false;
         }
-        Files.createDirectories(pack.getParent());
-        Files.move(built, pack);
-        deleteTree(old);
+    }
+
+    /**
+     * Puts a freshly built pack in the mods folder. A new pack moves there
+     * whole. An old one is updated file by file instead: the game watches
+     * every folder of the mods it has found for changes, and on Windows a
+     * folder can't be renamed while a folder inside it is watched, though
+     * the files in them can be replaced. The old pack's stamp goes first and
+     * the new one last, so a pack left half updated counts as out of date.
+     */
+    private static void install(Path built) throws IOException {
+        Path pack = pack();
+        if (!Files.exists(pack)) {
+            Files.createDirectories(pack.getParent());
+            Files.move(built, pack);
+            return;
+        }
+        Set<String> files = new HashSet<>();
+        try (Stream<Path> paths = Files.walk(built)) {
+            for (Path p : paths.filter(Files::isRegularFile).toList()) {
+                files.add(built.relativize(p).toString());
+            }
+        }
+        try {
+            Files.deleteIfExists(pack.resolve(STAMP));
+            for (String file : files) {
+                if (!file.equals(STAMP)) {
+                    Path to = pack.resolve(file);
+                    Files.createDirectories(to.getParent());
+                    Files.move(built.resolve(file), to, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+            // What the old pack had and the new one hasn't (folders stay).
+            try (Stream<Path> paths = Files.walk(pack)) {
+                for (Path p : paths.filter(Files::isRegularFile).toList()) {
+                    if (!files.contains(pack.relativize(p).toString())) {
+                        Files.delete(p);
+                    }
+                }
+            }
+            Files.move(built.resolve(STAMP), pack.resolve(STAMP), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            // Half moved: the next try builds it all again.
+            Files.deleteIfExists(built.resolve(STAMP));
+            throw e;
+        }
+        deleteTree(built);
     }
 
     private static void fail(String why) {

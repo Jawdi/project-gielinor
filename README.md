@@ -1,97 +1,52 @@
 # Project Gielinor
 
-A Project Zomboid mod that brings the world of Gielinor into Zomboid: its
-items, skills, creatures and eventually its map, played with Zomboid's own
-character, survival mechanics, UI and zombies.
+Project Gielinor brings Old School RuneScape (OSRS) to Project Zomboid, including RuneScape's items, skills, creatures and the world of Gielinor. Play with Zomboid's character system, survival mechanics, UI and zombies.
 
-## How it's put together
+**[Get the mod on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3821895054)**
 
-The mod ships only its own code. None of Jagex's assets are included or
-distributed. Instead, a builder makes them on your machine:
-
-1. **Project Gielinor** (Steam Workshop): the mod's Lua and scripts, the
-   mechanics that tie Gielinor's content into Zomboid.
-2. **Project Gielinor Content Builder** (a separate download): writes a local
-   content pack (items, icons, models, zombies and so on) into your Zomboid
-   mods folder. The Workshop mod requires that pack.
-
-The builder always builds from the same version of the game, so every player
-and every multiplayer server gets the same items and world. It fetches that
-version (the game cache, about 190 MB, and the keys that unlock its map) once
-from the [OpenRS2 archive](https://archive.openrs2.org) and keeps it for later
-builds.
+This is an early test build. Expect bugs, and start a new world after each update. We haven't tested compatibility with other mods.
 
 ## Requirements
 
-- Project Zomboid, Build 42.
-- An internet connection the first time the builder runs.
+- Project Zomboid Build 42.
+- [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853), including its Java component. Follow the installation instructions on its Workshop page.
+- An internet connection for the initial setup.
 
-## Building the content pack
+## Getting started
 
-The builder needs Java 21 and Gradle. From `builder/`:
+1. Subscribe to Project Gielinor on Steam Workshop and install ZombieBuddy's Java component.
+2. Enable Project Gielinor. This also enables ZombieBuddy. When ZombieBuddy asks for permission to run Project Gielinor's Java code, allow it. You only need to do this once.
+3. At the main menu, follow the prompt to build the content pack. This downloads about 190 MB of game files from the [OpenRS2 archive](https://archive.openrs2.org) and builds Gielinor's items, characters, creatures and world on your computer.
+4. Allow several minutes for the build. Once it finishes, the mods reload with the content pack enabled.
+5. Start a new game and choose **Gielinor** at World Select.
 
+The mod does not include Jagex's game files. Build the content pack on your own computer; please don't share or upload the generated pack.
+
+## Servers
+
+Install ZombieBuddy's Java component on the server, then use these settings:
+
+```ini
+Mods=ZombieBuddy;ProjectGielinorContent;ProjectGielinor
+Map=Gielinor
 ```
-gradle run
-```
 
-It finds Project Zomboid on its own and writes the pack to
-`Zomboid/mods/ProjectGielinorContent`. To point it somewhere else, or build
-from another cache:
+The server builds its content pack on the first start and again after each update. Players need to build their own pack from the main menu before joining.
 
-```
-gradle run --args="--cache <cache folder> --zomboid <install folder> --out <pack folder>"
-```
+## Source code
 
-Each build writes `item-report.txt` next to the pack, listing the items left
-out and why. `builder/src/main/resources/item-overrides.txt` keeps or drops
-items by name.
+This repository contains the mod and content-builder source code so you can inspect how they work. Use the Steam Workshop version to play.
 
-The builder reads the cache with RuneLite's open-source cache library.
+The builder reads the game cache using RuneLite's open-source cache library and generates the content pack on your computer. Downloaded game files and generated content packs are not part of the source release. Please don't commit or upload them.
 
-## What's in it so far
+## Permissions
 
-- Items: the game's items the mod has a use for, about 2,300: weapons, tools,
-  food, drink, clothing and armour, and the materials Zomboid's crafting or
-  the mod's skills use (ore, bars, logs, gems, herbs, seeds, hides, runes).
-  Quest and minigame items, burnt food, poisoned copies and kinds with no use
-  yet (ammunition, bows, shields, potions) are left out. Each item copies the
-  vanilla Zomboid item that plays the same part, so it works where that does:
-  axes chop trees (with tree damage scaled from their strength bonus), hammers
-  build, needles sew, buckets and jugs hold water, a jug of wine holds wine,
-  raw fish needs cooking. Weapons fight with damage scaled from their
-  strength bonus.
-- Loot: items turn up where Zomboid keeps its own of the same kind (axes with
-  tools, armour in wardrobes, ore with metal bars, food in kitchens), cheap
-  ones common and valuable ones rare, and zombies carry a few. Switches for
-  Gielinor's and Zomboid's items in loot are ready for sandbox options.
-- Models: everything keeps the game's own shape and flat colours. People
-  (your character, clothing, zombies, monsters) move on Zomboid's skeleton the
-  way the game animates them: each part of a model moves with one bone.
-- Clothing and armour: every wearable is Zomboid clothing. Armour protects
-  against bites and scratches by its defence bonuses (a rune platebody about
-  57 out of 100). Helmets hide hair as they do in the game.
-- Your character: character creation is the game's character designer. Pick
-  body type A or B, a style for each body part (hair, jaw, torso, arms, legs,
-  feet) and the hair, clothing, shoe and skin colours from the game's
-  palettes. Name, voice, profession and traits stay Zomboid's. As in Zomboid,
-  the body can't be taken off and the clothes can: the torso and arms you pick
-  are a top, the legs trousers, the feet shoes, all ordinary clothing you can
-  take off, drop, swap and loot, with a Gielinor body (in underwear)
-  underneath.
-- Zombies: every zombie is one of Gielinor's folk, zombified: a random look
-  from the character designer, in Gielinor clothes (now and then missing a
-  piece) that drop with the corpse.
-- Animals: Zomboid's cows, chickens, sheep, pigs, rabbits, rats, mice,
-  raccoons and deer take the look of their Gielinor counterparts.
-- New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
-  lobster and a jug of wine.
+Do not reupload or redistribute this mod, including modified versions, without our permission. Do not copy or reuse our code in other projects without asking us first.
 
-## Status
+This also applies to mod packs that bundle our files. You can include the Workshop link in collections.
 
-Early development. Nothing is released yet.
+These permissions concern our code only. RuneScape content belongs to Jagex.
 
-## Legal
+## Credits
 
-Project Gielinor is a fan project. It isn't affiliated with or endorsed by
-Jagex or The Indie Stone. Old School RuneScape and RuneScape are trademarks
-of Jagex Ltd.; Project Zomboid is a trademark of The Indie Stone.
+Project Gielinor is a fan project with no affiliation with or endorsement from Jagex or The Indie Stone. Old School RuneScape and RuneScape are trademarks of Jagex Ltd.; Project Zomboid is a trademark of The Indie Stone.

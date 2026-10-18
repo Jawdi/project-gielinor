@@ -35,15 +35,13 @@ final class GielinorMap {
     /** Each of the game's tiles is this many Zomboid squares across. */
     static final int SCALE = 2;
     /** Where new characters start: the courtyard of Lumbridge castle, in the game's tile coordinates. */
-    static final int START_X = 3222;
-    static final int START_Y = 3218;
     /**
      * Each chunk's zombie density. Kentucky's own map gives its populated
      * chunks about 2 (and most none, averaging 0.07); every chunk of land
      * here gets 1 for now.
      */
     static final int ZOMBIE_DENSITY = 1;
-    /** No zombies within this many squares of where characters start, so they start safe in Lumbridge castle. */
+    /** No zombies within this many squares of where characters start, so they start safe in town. */
     static final int SAFE_RADIUS = 80;
 
     /**
@@ -198,6 +196,93 @@ final class GielinorMap {
                 }
             }
             return filled;
+        }
+
+        /**
+         * Makes each of the game's roofs one roof. The game builds a tall
+         * roof (a church's) as rows of roof objects on planes above one
+         * another, each row a plane higher than the one outside it, and a
+         * gable roof as rows along its long sides only, open between them;
+         * Zomboid's roofs rise from one level. So each roof (roofed tiles side
+         * by side, on any level) comes down to its lowest level wherever no
+         * floor stands under its higher rows, spreads over its building's
+         * roofless inside between its rows, and takes the style most of it
+         * has. Returns how many tiles changed.
+         */
+        int joinRoofs() {
+            if (roofs == null) {
+                return 0;
+            }
+            int n = tilesX * tilesY;
+            boolean[] seen = new boolean[n];
+            int[] queue = new int[n];
+            int changed = 0;
+            for (int start = 0; start < n; start++) {
+                if (seen[start] || lowestRoof(start) < 0) {
+                    continue;
+                }
+                int head = 0;
+                int tail = 0;
+                queue[tail++] = start;
+                seen[start] = true;
+                int low = Integer.MAX_VALUE;
+                int[] votes = new int[8];
+                while (head < tail) {
+                    int i = queue[head++];
+                    low = Math.min(low, lowestRoof(i));
+                    votes[(roofs[i] & 0xff) >> 5]++;
+                    for (int next : neighbours(i)) {
+                        if (next >= 0 && !seen[next] && lowestRoof(next) >= 0) {
+                            seen[next] = true;
+                            queue[tail++] = next;
+                        }
+                    }
+                }
+                int style = 0;
+                for (int k = 1; k < votes.length; k++) {
+                    style = votes[k] > votes[style] ? k : style;
+                }
+                // The building's roofless inside between the roof's rows.
+                for (head = 0; head < tail; head++) {
+                    for (int next : neighbours(queue[head])) {
+                        if (next >= 0 && !seen[next] && lowestRoof(next) < 0 && indoorTile(low - 1, next % tilesX, next / tilesX)
+                                && !floorFrom(low, GielinorObjects.LEVELS, next)) {
+                            seen[next] = true;
+                            queue[tail++] = next;
+                        }
+                    }
+                }
+                for (int k = 0; k < tail; k++) {
+                    int i = queue[k];
+                    int at = lowestRoof(i);
+                    int level = at < 0 || !floorFrom(low, at, i) ? low : at;
+                    if (level != at || (roofs[i] & 0xff) >> 5 != style) {
+                        changed++;
+                    }
+                    roof(level, i % tilesX, i / tilesX, style);
+                }
+            }
+            return changed;
+        }
+
+        /** The lowest level a tile (by its place in the grid) has a roof on, or -1. */
+        private int lowestRoof(int i) {
+            for (int level = 1; level <= 4; level++) {
+                if ((roofs[i] & 1 << level) != 0) {
+                    return level;
+                }
+            }
+            return -1;
+        }
+
+        /** Whether a tile (by its place in the grid) has a floor on any level from `from` up to (not including) `to`. */
+        private boolean floorFrom(int from, int to, int i) {
+            for (int level = Math.max(from, 1); level < Math.min(to, upper.length); level++) {
+                if (upper[level] != null && (upper[level][i] & FLOOR) != 0) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /** The four tiles beside one (by its place in the grid), -1 past the world's edge. */
@@ -377,11 +462,20 @@ final class GielinorMap {
         Main.step("The map: buildings, furniture and scenery");
         objects.place(levels, ground, terrain);
         int roofHoles = ground.fillRoofHoles();
+        int roofsJoined = ground.joinRoofs();
         GielinorObjects.Placed placed = levels[0];
         int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
         int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
-        int startX = (START_X - FIRST_SQUARE_X * 64) * SCALE;
-        int startY = height - (START_Y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
+        // Where characters can start: a spot in each town.
+        Map<String, int[]> starts = new java.util.LinkedHashMap<>();
+        for (Object[] town : TOWNS) {
+            int[] spot = startSpot(ground, placed, (Integer) town[1], (Integer) town[2]);
+            if (spot == null) {
+                System.out.println("  no place to start in " + town[0]);
+            } else {
+                starts.put((String) town[0], spot);
+            }
+        }
         int percent = -1;
         for (int cx = 0; cx < cellsX; cx++) {
             for (int cy = 0; cy < cellsY; cy++) {
@@ -448,7 +542,10 @@ final class GielinorMap {
                         }
                         int middleX = cx * MapCell.SIZE + kx * MapCell.CHUNK + MapCell.CHUNK / 2;
                         int middleY = cy * MapCell.SIZE + ky * MapCell.CHUNK + MapCell.CHUNK / 2;
-                        boolean nearStart = Math.hypot(middleX - startX, middleY - startY) < SAFE_RADIUS;
+                        boolean nearStart = false;
+                        for (int[] start : starts.values()) {
+                            nearStart |= Math.hypot(middleX - start[0], middleY - start[1]) < SAFE_RADIUS;
+                        }
                         boolean onWater = wet > MapCell.CHUNK * MapCell.CHUNK / 2;
                         cell.setZombies(kx, ky, nearStart || onWater ? 0 : ZOMBIE_DENSITY);
                     }
@@ -464,11 +561,11 @@ final class GielinorMap {
         writeInfo(dir);
         Main.step("The world map");
         writeWorldMap(dir, ground, cellsX, cellsY);
-        writeSpawnPoints(dir, startX, startY);
+        writeTowns(dir, starts);
         Files.writeString(dir.resolve("objects.lua"), "objects = {\n}\n", StandardCharsets.UTF_8);
         System.out.println("  map: " + cellsX * cellsY + " cells, ground " + counts + ", " + gaps + " gaps filled, "
             + roomCount + " rooms in " + buildingCount + " buildings " + roomNames + ", " + upperFloors + " tiles of upper floors, "
-            + roofHoles + " tiles of roofs' middles filled");
+            + roofHoles + " tiles of roofs' middles filled, " + roofsJoined + " joined into their roofs, " + starts.size() + " towns to start in");
     }
 
     /**
@@ -1174,10 +1271,86 @@ final class GielinorMap {
         out.write(v >>> 8);
     }
 
-    /** Every profession starts at the one point for now. */
-    private static void writeSpawnPoints(Path dir, int x, int y) throws IOException {
-        Files.writeString(dir.resolve("spawnpoints.lua"), "function SpawnPoints()\n    local start = {\n"
-            + "        { posX = " + x + ", posY = " + y + ", posZ = 0 },\n    }\n"
-            + "    return {\n        unemployed = start,\n    }\nend\n", StandardCharsets.UTF_8);
+    /**
+     * The towns a game can start in, as the game's own maps name them: where
+     * its teleports land, or else where its world map writes the town's name.
+     */
+    private static final Object[][] TOWNS = {
+        {"Lumbridge", 3222, 3218}, {"Draynor Village", 3105, 3251}, {"Varrock", 3212, 3423}, {"Edgeville", 3087, 3503},
+        {"Barbarian Village", 3063, 3416}, {"Al Kharid", 3293, 3163}, {"Falador", 2965, 3380}, {"Port Sarim", 3047, 3221},
+        {"Rimmington", 2960, 3222}, {"Taverley", 2900, 3458}, {"Burthorpe", 2900, 3552}, {"Catherby", 2804, 3433},
+        {"Seers' Village", 2692, 3489}, {"East Ardougne", 2662, 3307}, {"West Ardougne", 2524, 3308}, {"Yanille", 2549, 3091},
+        {"Tree Gnome Stronghold", 2433, 3454}, {"Port Khazard", 2659, 3189}, {"Brimhaven", 2779, 3174}, {"Musa Point", 2918, 3176},
+        {"Shilo Village", 2849, 2986}, {"Canifis", 3496, 3489}, {"Port Phasmatys", 3673, 3487}, {"Rellekka", 2672, 3681},
+        {"Pollnivneach", 3356, 2980}, {"Nardah", 3429, 2902}, {"Sophanem", 3298, 2783}, {"Hosidius", 1750, 3607},
+        {"Arceuus", 1678, 3752}, {"Lovakengj", 1503, 3798}, {"Shayzien", 1536, 3552}, {"Port Piscarilius", 1824, 3704},
+        {"Civitas illa Fortis", 1713, 3127}, {"Prifddinas", 2240, 3328}, {"Lletya", 2346, 3180},
+    };
+    /** How far from a town's point (in squares) a spot to start on is looked for. */
+    private static final int TOWN_REACH = 40;
+
+    /**
+     * The towns to start in, as Zomboid's own towns are laid out: each a map
+     * folder beside the world's (`Gielinor, Varrock`) with a `map.info`
+     * naming it and pointing at the world's lots, and its spot to start on
+     * in its `spawnpoints.lua`. The world's folder lists them all in
+     * `spawnregions.lua`, for a game (a server's) that names only the world.
+     */
+    private static void writeTowns(Path dir, Map<String, int[]> starts) throws IOException {
+        Path maps = dir.getParent();
+        try (var old = Files.list(maps)) {
+            for (Path p : old.filter(p -> p.getFileName().toString().startsWith(FOLDER + ", ")).toList()) {
+                deleteTree(p);
+            }
+        }
+        StringBuilder regions = new StringBuilder("function SpawnRegions()\n    return {\n");
+        for (Map.Entry<String, int[]> town : starts.entrySet()) {
+            String name = town.getKey();
+            int[] spot = town.getValue();
+            String folder = FOLDER + ", " + name.replace("'", "");
+            Path townDir = maps.resolve(folder);
+            Files.createDirectories(townDir);
+            Files.writeString(townDir.resolve("map.info"), String.join("\n",
+                "title=" + name,
+                "lots=" + FOLDER,
+                "fixed2x=true",
+                "description=Start in " + name + ".",
+                "zoomX=" + spot[0],
+                "zoomY=" + spot[1],
+                "zoomS=14.5",
+                ""), StandardCharsets.UTF_8);
+            Files.writeString(townDir.resolve("spawnpoints.lua"), "function SpawnPoints()\n    local start = {\n"
+                + "        { posX = " + spot[0] + ", posY = " + spot[1] + ", posZ = 0 },\n    }\n"
+                + "    return {\n        unemployed = start,\n    }\nend\n", StandardCharsets.UTF_8);
+            regions.append("        { name = \"").append(folder).append("\", file = \"media/maps/").append(folder).append("/spawnpoints.lua\" },\n");
+        }
+        Files.writeString(dir.resolve("spawnregions.lua"), regions.append("    }\nend\n").toString(), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Where to start in a town: the square nearest its point (a game tile),
+     * within {@link #TOWN_REACH}, that's dry, outdoors and empty; null if
+     * there's none (the town is left out of the map).
+     */
+    private static int[] startSpot(GroundGrid ground, GielinorObjects.Placed placed, int x, int y) {
+        int zx = (x - FIRST_SQUARE_X * 64) * SCALE;
+        int zy = ground.height - (y - FIRST_SQUARE_Y * 64 + 1) * SCALE;
+        for (int r = 0; r <= TOWN_REACH; r++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != r) {
+                        continue;
+                    }
+                    int sx = zx + dx;
+                    int sy = zy + dy;
+                    GielinorTerrain.Ground g = ground.at(sx, sy);
+                    if (g != null && g != GielinorTerrain.Ground.WATER && !ground.indoor(sx, sy) && placed.inside(sx, sy)
+                            && placed.standing(sx, sy) == null) {
+                        return new int[]{sx, sy};
+                    }
+                }
+            }
+        }
+        return null;
     }
 }

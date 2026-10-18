@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -58,7 +59,6 @@ final class GielinorObjects {
         BRICK("walls_exterior_house_02", 64),
         WOOD("walls_exterior_wooden_01", 0),
         LOGS("walls_logs", 0),
-        LOW_WALL("walls_exterior_house_low_01", 0),
         FENCE("crafted_02", -1),
         RAILING("fencing_01", -1);
 
@@ -72,7 +72,7 @@ final class GielinorObjects {
 
         /** Whether it's a building's wall, with windows and door frames. */
         boolean building() {
-            return this != LOW_WALL && this != FENCE && this != RAILING;
+            return this != FENCE && this != RAILING;
         }
 
         /** The west wall, north wall or both (a corner), as a tile. */
@@ -374,7 +374,7 @@ final class GielinorObjects {
                 }
             }
         }
-        walls = oneStyleEach(walls);
+        walls = oneStyleEach(windowsBetween(walls, ground));
         // Where each edge's wall is, for the doors to find their gaps.
         Map<Long, Style> edges = new HashMap<>();
         for (Wall w : walls) {
@@ -411,6 +411,7 @@ final class GielinorObjects {
         }
         counts.merge("doors standing open", opened.size(), Integer::sum);
         java.util.Set<Wall> doors = new java.util.HashSet<>(opened);
+        walls = windowsAlong(walls, doors, ground);
         for (Wall w : walls) {
             if (doors.contains(w)) {
                 continue;
@@ -427,12 +428,164 @@ final class GielinorObjects {
         System.out.println("  objects: " + counts);
     }
 
+    /** Along a building's outside wall, a window every this many pieces. */
+    private static final int WINDOW_EVERY = 3;
+
+    /**
+     * Windows in buildings' outside walls. The game shows most of its
+     * windows as decorations hung on solid walls, which Zomboid can't open
+     * or see through; so along each straight run of a building's outside
+     * wall (between its corners, doorways and gaps) that has no window of
+     * its own, every few pieces is one, away from the run's ends, and a
+     * short run gets one in its middle.
+     */
+    private List<Wall> windowsAlong(List<Wall> walls, java.util.Set<Wall> doors, GielinorMap.GroundGrid ground) {
+        // Straight outside walls by line (level, which way, where), then along it.
+        Map<Long, TreeMap<Integer, Wall>> lines = new HashMap<>();
+        java.util.Set<Long> glazed = new java.util.HashSet<>();
+        for (Wall w : walls) {
+            if (w.shape != 0 || !w.kind.style.building() || doors.contains(w) || !outside(ground, w)) {
+                continue;
+            }
+            int side = w.turn;
+            int ex = side == 2 ? w.x + 1 : w.x;
+            int ey = side == 3 ? w.y - 1 : w.y;
+            boolean west = side == 0 || side == 2;
+            long line = (long) w.level << 40 | (west ? 1L << 39 : 0) | (west ? ex : ey);
+            lines.computeIfAbsent(line, k -> new TreeMap<>()).put(west ? ey : ex, w);
+        }
+        Map<Wall, Wall> windows = new HashMap<>();
+        for (TreeMap<Integer, Wall> line : lines.values()) {
+            List<Wall> run = new ArrayList<>();
+            Integer last = null;
+            for (Map.Entry<Integer, Wall> e : line.entrySet()) {
+                if (last != null && e.getKey() != last + 1) {
+                    glaze(run, windows);
+                    run.clear();
+                }
+                run.add(e.getValue());
+                last = e.getKey();
+            }
+            glaze(run, windows);
+        }
+        counts.merge("windows added", windows.size(), Integer::sum);
+        List<Wall> out = new ArrayList<>();
+        for (Wall w : walls) {
+            out.add(windows.getOrDefault(w, w));
+        }
+        return out;
+    }
+
+    /** Puts windows along one straight run of outside wall (see {@link #windowsAlong}), unless it has one. */
+    private static void glaze(List<Wall> run, Map<Wall, Wall> windows) {
+        for (Wall w : run) {
+            if (w.kind.window) {
+                return;
+            }
+        }
+        for (int k = 0; k < run.size(); k++) {
+            boolean place = run.size() <= 2 ? k == 0 : k % WINDOW_EVERY == 1 && k < run.size() - 1;
+            if (place) {
+                Wall w = run.get(k);
+                windows.put(w, new Wall(w.id, w.level, w.x, w.y, w.shape, w.turn, new WallKind(w.kind.style, true)));
+            }
+        }
+    }
+
+    /** Whether a straight wall has a building's inside on one side and the outside on the other. */
+    private static boolean outside(GielinorMap.GroundGrid ground, Wall w) {
+        int tx = w.x - GielinorMap.FIRST_SQUARE_X * 64;
+        int ty = w.y - GielinorMap.FIRST_SQUARE_Y * 64;
+        int nx = w.turn == 0 ? tx - 1 : w.turn == 2 ? tx + 1 : tx;
+        int ny = w.turn == 1 ? ty + 1 : w.turn == 3 ? ty - 1 : ty;
+        return ground.indoorTile(w.level, tx, ty) != ground.indoorTile(w.level, nx, ny);
+    }
+
+    /** How far (in tiles) from where it stands a gate looks for the gap in its fence. */
+    private static final int GATE_REACH = 2;
+
+    /** The most pieces of a building's wall one opening spans. */
+    private static final int OPENING = 3;
+
+    /**
+     * Openings in a building's wall: a piece that blocks arrows but is
+     * mostly gap (a church's tall arched window, a great arched opening),
+     * which the builder took for a railing, is a window in the wall when
+     * it stands in a straight line between pieces of a building's wall with
+     * the building's inside on one side of it. Railings running on from a
+     * building keep their own look.
+     */
+    private List<Wall> windowsBetween(List<Wall> walls, GielinorMap.GroundGrid ground) {
+        Map<Long, Wall> byEdge = new HashMap<>();
+        for (Wall w : walls) {
+            for (int side : w.sides()) {
+                byEdge.put(edgeKey(w.level, w.x, w.y, side), w);
+            }
+        }
+        List<Wall> out = new ArrayList<>();
+        int windows = 0;
+        for (Wall w : walls) {
+            Style before = null;
+            Style after = null;
+            if (w.shape == 0 && !w.kind.style.building() && blocksArrows(w) && insideOneSide(ground, w)) {
+                before = buildingAlong(byEdge, w, -1);
+                after = buildingAlong(byEdge, w, 1);
+            }
+            if (before != null && after != null) {
+                out.add(new Wall(w.id, w.level, w.x, w.y, w.shape, w.turn, new WallKind(before, true)));
+                windows++;
+            } else {
+                out.add(w);
+            }
+        }
+        counts.merge("openings made windows", windows, Integer::sum);
+        return out;
+    }
+
+    private boolean blocksArrows(Wall w) {
+        return objects.getObject(w.id).isBlocksProjectile();
+    }
+
+    /**
+     * The style of the first piece of a building's wall along `w`'s line
+     * (`step` either way), over at most {@link #OPENING} pieces that are
+     * mostly gap and block arrows; null if the line stops or turns into a
+     * railing first.
+     */
+    private Style buildingAlong(Map<Long, Wall> byEdge, Wall w, int step) {
+        boolean westSide = w.turn == 0 || w.turn == 2;
+        for (int k = 1; k <= OPENING; k++) {
+            int x = westSide ? w.x : w.x + step * k;
+            int y = westSide ? w.y + step * k : w.y;
+            Wall next = byEdge.get(edgeKey(w.level, x, y, w.turn));
+            if (next == null) {
+                return null;
+            }
+            if (next.kind.style.building()) {
+                return next.kind.style;
+            }
+            if (!blocksArrows(next)) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** Whether the tile on either side of a straight wall is inside a building. */
+    private static boolean insideOneSide(GielinorMap.GroundGrid ground, Wall w) {
+        int tx = w.x - GielinorMap.FIRST_SQUARE_X * 64;
+        int ty = w.y - GielinorMap.FIRST_SQUARE_Y * 64;
+        int nx = w.turn == 0 ? tx - 1 : w.turn == 2 ? tx + 1 : tx;
+        int ny = w.turn == 1 ? ty + 1 : w.turn == 3 ? ty - 1 : ty;
+        return ground.indoorTile(w.level, tx, ty) || ground.indoorTile(w.level, nx, ny);
+    }
+
     /**
      * Gives each building's walls one style, the one most of its walls have:
      * the game colours each piece of wall on its own, so a stone building's
      * pieces would come out stone, brick and wood. A building is the
      * building walls joined at their ends, and those over one another on the
-     * levels above. Fences, railings and low walls keep their own.
+     * levels above. Fences and railings keep their own.
      */
     private static List<Wall> oneStyleEach(List<Wall> walls) {
         Map<Long, Integer> corners = new HashMap<>();
@@ -719,6 +872,8 @@ final class GielinorObjects {
      */
     private void placeDoors(Placed[] levels, List<int[]> doorObjects, Map<Long, Style> edges) {
         Map<Long, Door> doors = new java.util.LinkedHashMap<>();
+        // Doors first, so a gate looking round for its gap leaves their doorways be.
+        doorObjects.sort(Comparator.comparing(o -> name(objects.getObject(o[4])).contains("gate")));
         for (int[] o : doorObjects) {
             ObjectDefinition def = objects.getObject(o[4]);
             int level = o[0];
@@ -728,20 +883,48 @@ final class GielinorObjects {
             // Stored open (it closes but doesn't open, or it's a nameless
             // door left open): back into the doorway it swung out of.
             boolean open = closes(def) && !opens(def) || nameless(def) && !closes(def) && !opens(def);
-            List<int[]> candidates = open ? swungShut(def, x, y, turn) : List.of(new int[]{x, y, turn});
+            boolean gate = name(def).contains("gate");
+            List<int[]> candidates = new ArrayList<>(open ? swungShut(def, x, y, turn) : List.of(new int[]{x, y, turn}));
+            int nearby = candidates.size();
+            if (gate) {
+                // The game's long gates are drawn reaching past the tile they
+                // stand on, so a gate may stand across its fence rather than
+                // in it: the gaps in fences nearby are its places too.
+                for (int dx = -GATE_REACH; dx <= GATE_REACH; dx++) {
+                    for (int dy = -GATE_REACH; dy <= GATE_REACH; dy++) {
+                        candidates.add(new int[]{x + dx, y + dy, 0});
+                        candidates.add(new int[]{x + dx, y + dy, 1});
+                    }
+                }
+            }
             int[] best = null;
             int bestScore = Integer.MIN_VALUE;
-            for (int[] c : candidates) {
+            for (int k = 0; k < candidates.size(); k++) {
+                int[] c = candidates.get(k);
                 long key = edgeKey(level, c[0], c[1], c[2]);
+                if (doors.containsKey(key)) {
+                    continue;
+                }
+                // Fence or wall on either side along its line (or past the
+                // other half of a double gate's gap), the places it was found
+                // at first, then the nearest.
                 Door probe = door(level, c[0], c[1], c[2], false);
-                int score = (edges.containsKey(key) ? -4 : 0) + (edges.containsKey(along(probe, 1)) ? 1 : 0)
-                    + (edges.containsKey(along(probe, -1)) ? 1 : 0);
+                int sides = 0;
+                for (int step : new int[]{1, -1}) {
+                    sides += edges.containsKey(along(probe, step)) || !edges.containsKey(along(probe, step))
+                        && edges.containsKey(along(probe, 2 * step)) ? 1 : 0;
+                }
+                int far = Math.abs(c[0] - x) + Math.abs(c[1] - y);
+                int score = ((edges.containsKey(key) ? -4 : 0) + sides) * 16 - (k < nearby ? 0 : 1 + far);
                 if (score > bestScore) {
                     bestScore = score;
                     best = c;
                 }
             }
-            Door d = door(level, best[0], best[1], best[2], name(def).contains("gate"));
+            if (best == null) {
+                continue;
+            }
+            Door d = door(level, best[0], best[1], best[2], gate);
             doors.putIfAbsent(edgeKey(d), d);
         }
         java.util.Set<Long> done = new java.util.HashSet<>();
@@ -814,7 +997,8 @@ final class GielinorObjects {
                 }
             }
         }
-        return found != null ? found : Style.WOOD;
+        // Standing on its own: a gate in a wooden fence, a door in a wooden wall.
+        return found != null ? found : d.gate ? Style.FENCE : Style.WOOD;
     }
 
     /**
@@ -1048,29 +1232,31 @@ final class GielinorObjects {
             // than wall, and arrows fly through some.
             return new WallKind(buildingStyle(colour), true);
         }
+        if (top >= LOW && def.isBlocksProjectile() && covered(mesh, top, 0.03, 0.15) > 0.85 && covered(mesh, top, 0.4, 0.6) > 0.85) {
+            // Solid through its lower two thirds, its top shaped (a gable's
+            // slope): a building's wall.
+            return new WallKind(buildingStyle(colour), false);
+        }
         double[] rgb = averageColour(mesh);
         double chroma = (Math.max(rgb[0], Math.max(rgb[1], rgb[2])) - Math.min(rgb[0], Math.min(rgb[1], rgb[2]))) / 255;
         // The game's wood is warm and strongly coloured; its stone and iron are near grey.
         boolean wooden = chroma >= 0.2 && rgb[0] > rgb[2];
-        if (!def.isBlocksProjectile() || solid < SOLID) {
-            // Arrows fly over it, or it's mostly gaps: a fence, a hedge, a
-            // dry stone wall or an iron railing.
+        if (!def.isBlocksProjectile() || solid < SOLID || top < LOW) {
+            // Arrows fly over it, it's mostly gaps or it's low: a fence, a
+            // hedge, an iron railing or a low stone wall. Zomboid's low
+            // walls look out of place in the open, so the stone ones are
+            // railings too.
             if (wooden || colour.equals("green")) {
                 return new WallKind(Style.FENCE, false);
             }
-            return new WallKind(solid >= STONE_SOLID ? Style.LOW_WALL : Style.RAILING, false);
-        }
-        if (top < LOW) {
-            return new WallKind(Style.LOW_WALL, false);
+            return new WallKind(Style.RAILING, false);
         }
         return new WallKind(buildingStyle(colour), window(mesh, top));
     }
 
     /** How much of a wall's face must be covered for it to be a wall rather than a fence. */
     private static final double SOLID = 0.6;
-    /** A stone wall that arrows fly over (a dry stone wall's uneven top) is at least this solid; an iron railing less. */
-    private static final double STONE_SOLID = 0.4;
-    /** A wall lower than this (in the game's units, a tile being 128 across) is a low wall. */
+    /** A wall lower than this (in the game's units, a tile being 128 across) is a railing or fence. */
     private static final double LOW = 120;
 
     private static Style buildingStyle(String colour) {

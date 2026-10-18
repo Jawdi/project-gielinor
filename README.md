@@ -105,9 +105,12 @@ licences of the libraries it bundles are in its jar's
 - Animals: Zomboid's cows, chickens, sheep, pigs, rabbits, rats, mice,
   raccoons and deer take the look of their Gielinor counterparts.
 - Map: the world of Gielinor, chosen at World Select (or `Map=Gielinor` on a
-  server). The game's ground, its buildings on every floor with their walls,
-  doors, windows, stairs and pitched roofs, its fences, trees, rocks and ore,
-  and its furniture as Zomboid's own: beds sleep, chairs seat, ranges cook,
+  server), starting in any of its towns: Lumbridge, Varrock, Falador, the
+  Ardougnes, Kourend's cities and some thirty more. The game's ground, its
+  buildings on every floor with their walls, doors, stairs and one pitched
+  roof each, windows along every building's outside walls, its fences (its
+  low stone walls as iron railings), trees, rocks and ore, and its furniture
+  as Zomboid's own: beds sleep, chairs seat, ranges cook,
   and drawers, wardrobes, shelves, counters and crates hold loot. Rooms are
   named by their furniture, so a kitchen's counters hold kitchen things and a
   smithy's shelves hold metalwork, and rooms short of containers get some.

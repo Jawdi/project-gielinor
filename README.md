@@ -121,7 +121,8 @@ licences of the libraries it bundles are in its jar's
 
 ## Status
 
-Early development. Nothing is released yet.
+Early development. A test build is on the Steam Workshop as an unlisted item:
+https://steamcommunity.com/sharedfiles/filedetails/?id=3821895054
 
 ## Legal
 

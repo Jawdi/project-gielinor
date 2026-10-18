@@ -106,21 +106,9 @@ tasks.register('installMod', Sync) {
 
 tasks.register('workshop', Sync) {
     description = 'Lays the mod out as a Steam Workshop item, ready to upload from the game\'s Workshop screen.'
-    def item = new File(zomboidUser, 'Workshop/ProjectGielinor')
-    // The game writes the item's Workshop id into workshop.txt on its first
-    // upload, and later uploads update the item with that id: keep it.
-    def published = ''
-    doFirst {
-        def txt = new File(item, 'workshop.txt')
-        published = txt.isFile() ? (txt.readLines().find { it.startsWith('id=') } ?: '') : ''
-    }
-    from('../workshop') {
-        filesMatching('workshop.txt') {
-            filter { line -> line.startsWith('version=') && published ? "$line\n$published" : line }
-        }
-    }
+    from('../workshop')
     into('Contents/mods/ProjectGielinor') {
         with modFiles
     }
-    into item
+    into new File(zomboidUser, 'Workshop/ProjectGielinor')
 }

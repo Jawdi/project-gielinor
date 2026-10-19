@@ -47,6 +47,8 @@ This also applies to mod packs that bundle our files. You can include the Worksh
 
 These permissions concern our code only. RuneScape content belongs to Jagex.
 
+See [source code permissions](LICENSE.md) for the repository’s usage and redistribution terms.
+
 ## Credits
 
 Project Gielinor is a fan project with no affiliation with or endorsement from Jagex or The Indie Stone. Old School RuneScape and RuneScape are trademarks of Jagex Ltd.; Project Zomboid is a trademark of The Indie Stone.

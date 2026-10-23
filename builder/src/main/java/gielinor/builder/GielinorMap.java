@@ -217,49 +217,139 @@ final class GielinorMap {
             boolean[] seen = new boolean[n];
             int[] queue = new int[n];
             int changed = 0;
-            for (int start = 0; start < n; start++) {
-                if (seen[start] || lowestRoof(start) < 0) {
-                    continue;
-                }
-                int head = 0;
-                int tail = 0;
-                queue[tail++] = start;
-                seen[start] = true;
-                int low = Integer.MAX_VALUE;
-                int[] votes = new int[8];
-                while (head < tail) {
-                    int i = queue[head++];
-                    low = Math.min(low, lowestRoof(i));
-                    votes[(roofs[i] & 0xff) >> 5]++;
-                    for (int next : neighbours(i)) {
-                        if (next >= 0 && !seen[next] && lowestRoof(next) >= 0) {
-                            seen[next] = true;
-                            queue[tail++] = next;
+            // Start with lower roofs so separated rows reached across the
+            // building's interior join at the eaves, regardless of scan order.
+            for (int low = 1; low <= GielinorObjects.LEVELS; low++) {
+                for (int start = 0; start < n; start++) {
+                    if (seen[start] || lowestRoof(start) != low) {
+                        continue;
+                    }
+                    int head = 0;
+                    int tail = 0;
+                    queue[tail++] = start;
+                    seen[start] = true;
+                    int[] votes = new int[8];
+                    while (head < tail) {
+                        int i = queue[head++];
+                        if (lowestRoof(i) >= 0) {
+                            votes[(roofs[i] & 0xff) >> 5]++;
+                        }
+                        for (int next : neighbours(i)) {
+                            if (next < 0 || seen[next]) {
+                                continue;
+                            }
+                            int at = lowestRoof(next);
+                            // Cross the roofless interior and continue into
+                            // roof rows beyond it. A real floor between two
+                            // roof heights keeps the upper storey's roof apart.
+                            boolean connected = at >= low ? !floorFrom(low, at, next)
+                                : at < 0 && indoorTile(low - 1, next % tilesX, next / tilesX)
+                                    && !floorFrom(low, GielinorObjects.LEVELS, next);
+                            if (connected) {
+                                seen[next] = true;
+                                queue[tail++] = next;
+                            }
                         }
                     }
+                    int style = 0;
+                    for (int k = 1; k < votes.length; k++) {
+                        style = votes[k] > votes[style] ? k : style;
+                    }
+                    for (int k = 0; k < tail; k++) {
+                        int i = queue[k];
+                        if (lowestRoof(i) != low || (roofs[i] & 0xff) >> 5 != style) {
+                            changed++;
+                        }
+                        // Remove the displaced rows; retaining their bits
+                        // would leave several roofs over the same open hall.
+                        for (int z = low + 1; z <= GielinorObjects.LEVELS; z++) {
+                            if (!floorFrom(low, z, i)) {
+                                roofs[i] &= (byte) ~(1 << z);
+                            }
+                        }
+                        roof(low, i % tilesX, i / tilesX, style);
+                    }
                 }
-                int style = 0;
-                for (int k = 1; k < votes.length; k++) {
-                    style = votes[k] > votes[style] ? k : style;
-                }
-                // The building's roofless inside between the roof's rows.
-                for (head = 0; head < tail; head++) {
-                    for (int next : neighbours(queue[head])) {
-                        if (next >= 0 && !seen[next] && lowestRoof(next) < 0 && indoorTile(low - 1, next % tilesX, next / tilesX)
-                                && !floorFrom(low, GielinorObjects.LEVELS, next)) {
-                            seen[next] = true;
-                            queue[tail++] = next;
+            }
+            return changed + alignRoofEdges();
+        }
+
+        /**
+         * OSRS attic roofs can start beside the upper room on the plane
+         * below its main roof. Raise a narrow fringe to that main roof's
+         * level so Zomboid does not draw it as detached little roofs. A
+         * lower wing with any tile more than two game tiles from the upper
+         * room keeps its own roof. Work globally to avoid cell-edge seams.
+         */
+        private int alignRoofEdges() {
+            int n = tilesX * tilesY;
+            boolean[] seen = new boolean[n];
+            byte[] distance = new byte[n];
+            int[] queue = new int[n];
+            int changed = 0;
+            // Higher roofs settle first; eaves only move up one storey.
+            for (int low = GielinorObjects.LEVELS - 1; low >= 1; low--) {
+                for (int start = 0; start < n; start++) {
+                    if (seen[start] || lowestRoof(start) != low) {
+                        continue;
+                    }
+                    int head = 0;
+                    int tail = 0;
+                    queue[tail++] = start;
+                    seen[start] = true;
+                    boolean clear = true;
+                    int[] votes = new int[8];
+                    while (head < tail) {
+                        int i = queue[head++];
+                        clear &= !floorFrom(low, low + 1, i);
+                        for (int next : neighbours(i)) {
+                            if (next < 0) {
+                                continue;
+                            }
+                            int at = lowestRoof(next);
+                            if (at == low && !seen[next]) {
+                                seen[next] = true;
+                                queue[tail++] = next;
+                            } else if (at == low + 1 && floorFrom(low, low + 1, next)) {
+                                distance[i] = 1;
+                                votes[(roofs[next] & 0xff) >> 5]++;
+                            }
                         }
                     }
-                }
-                for (int k = 0; k < tail; k++) {
-                    int i = queue[k];
-                    int at = lowestRoof(i);
-                    int level = at < 0 || !floorFrom(low, at, i) ? low : at;
-                    if (level != at || (roofs[i] & 0xff) >> 5 != style) {
-                        changed++;
+                    if (!clear) {
+                        continue;
                     }
-                    roof(level, i % tilesX, i / tilesX, style);
+                    // One more tile reaches the corner of a one-tile fringe.
+                    // Do not propagate through a broad, genuine lower wing.
+                    for (int k = 0; k < tail; k++) {
+                        int i = queue[k];
+                        if (distance[i] != 0) {
+                            continue;
+                        }
+                        for (int next : neighbours(i)) {
+                            if (next >= 0 && lowestRoof(next) == low && distance[next] == 1) {
+                                distance[i] = 2;
+                                break;
+                            }
+                        }
+                    }
+                    boolean fringe = true;
+                    for (int k = 0; k < tail; k++) {
+                        fringe &= distance[queue[k]] != 0;
+                    }
+                    if (!fringe) {
+                        continue;
+                    }
+                    int style = 0;
+                    for (int k = 1; k < votes.length; k++) {
+                        style = votes[k] > votes[style] ? k : style;
+                    }
+                    for (int k = 0; k < tail; k++) {
+                        int i = queue[k];
+                        roofs[i] &= (byte) ~(1 << low);
+                        roof(low + 1, i % tilesX, i / tilesX, style);
+                    }
+                    changed += tail;
                 }
             }
             return changed;
@@ -294,7 +384,7 @@ final class GielinorMap {
 
         /** The style of the roof on a level over a Zomboid square (see {@link #roof}), or -1 for none. */
         int roofAt(int level, int zx, int zy) {
-            if (roofs == null || zx < 0 || zy < 0 || zx >= width || zy >= height) {
+            if (roofs == null || level < 1 || level > GielinorObjects.LEVELS || zx < 0 || zy < 0 || zx >= width || zy >= height) {
                 return -1;
             }
             int r = roofs[zx / SCALE + (tilesY - 1 - zy / SCALE) * tilesX] & 0xff;
@@ -463,6 +553,8 @@ final class GielinorMap {
         objects.place(levels, ground, terrain);
         int roofHoles = ground.fillRoofHoles();
         int roofsJoined = ground.joinRoofs();
+        int atticWalls = encloseUpperRooms(ground, levels);
+        System.out.println("  upper-room enclosure: " + atticWalls + " missing wall edges filled");
         GielinorObjects.Placed placed = levels[0];
         int cellsX = (width + MapCell.SIZE - 1) / MapCell.SIZE;
         int cellsY = (height + MapCell.SIZE - 1) / MapCell.SIZE;
@@ -724,6 +816,47 @@ final class GielinorMap {
     }
 
     /** Indoor floors (Zomboid's tiles): planks and flagstones. */
+    /** Roof slopes enclose some source attics; ordinary pitched tiles cannot replace those walls. */
+    static int encloseUpperRooms(GroundGrid ground, GielinorObjects.Placed[] levels) {
+        int count = 0;
+        for (int z = 1; z < levels.length; z++) {
+            for (int tx = 0; tx < ground.width; tx += SCALE) {
+                for (int ty = 0; ty < ground.height; ty += SCALE) {
+                    int bits = ground.upper(z, tx, ty);
+                    if ((bits & (GroundGrid.FLOOR | GroundGrid.ROOFED)) != (GroundGrid.FLOOR | GroundGrid.ROOFED)) continue;
+                    for (int dx = 0; dx < SCALE; dx++) for (int dy = 0; dy < SCALE; dy++) {
+                        int x = tx + dx, y = ty + dy;
+                        if (levels[z].isOpen(x, y)) continue;
+                        for (int[] step : STEPS) {
+                            int nx = x + step[0], ny = y + step[1];
+                            // Floors alongside a room may be balconies or ladder landings.
+                            // Keep those connections, and all stair/ladder holes, as imported.
+                            if ((ground.upper(z, nx, ny) & GroundGrid.FLOOR) != 0
+                                    || levels[z].isOpen(nx, ny) || levels[z].isLanding(nx, ny)) continue;
+                            int ex = Math.max(x, nx), ey = Math.max(y, ny);
+                            boolean west = x != nx;
+                            if (levels[z].style(ex, ey, west) != null || levels[z].gap(ex, ey, west) != GielinorObjects.NONE) continue;
+                            GielinorObjects.Style style = null;
+                            for (int r = 0; r <= 4 && style == null; r++) {
+                                for (int[] direction : STEPS) {
+                                    for (boolean side : new boolean[]{true, false}) {
+                                        var candidate = levels[z - 1].style(ex + direction[0] * r, ey + direction[1] * r, side);
+                                        if (candidate != null && candidate.building()) { style = candidate; break; }
+                                    }
+                                    if (style != null) break;
+                                }
+                            }
+                            if (style == null) style = (bits & GroundGrid.STONE) != 0 ? GielinorObjects.Style.STONE : GielinorObjects.Style.WOOD;
+                            levels[z].edge(ex, ey, west, style, GielinorObjects.NONE);
+                            count++;
+                        }
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
     private static final String WOODEN_FLOOR = "floors_interior_tilesandwood_01_41";
     private static final String STONE_FLOOR = "floors_exterior_tilesandstone_01_5";
     private static int roomCount;

@@ -53,8 +53,8 @@ final class MapCell {
 
     final int cellX;
     final int cellY;
-    /** The most levels a cell has: the game's four floors and a roof over the top one. */
-    static final int LEVELS = 5;
+    /** Four floors, the slopes over the top storey, and their flat cap one level higher. */
+    static final int LEVELS = GielinorObjects.LEVELS + 2;
     /** Each level's squares' tiles, floor first, by x + y * SIZE (null for none), made as they're first set. */
     private final String[][][] levels = new String[LEVELS][][];
     /** The rooms, each a name, its level and its rectangles (x, y, width, height). */

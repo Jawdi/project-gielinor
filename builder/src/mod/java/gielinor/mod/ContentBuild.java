@@ -10,11 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -43,9 +41,10 @@ public final class ContentBuild {
     private static final String MOD_ID = "ProjectGielinor";
     /** The builder, in this mod's version folder. */
     private static final String BUILDER = "media/builder/ProjectGielinorBuilder.jar";
+    private static final String WORLD_RECIPE = "media/builder/world-recipe";
     /** The file in a built pack naming the builder that made it, by the SHA-256 of its jar. */
     private static final String STAMP = "built-by.txt";
-    /** How much memory the builder may use (about twice what a build needs at most). */
+    /** Heap limit for item generation and streamed world drawing. */
     private static final String HEAP = "-Xmx3g";
     /** The builder marks the lines that name its steps with this (the rest are details for the log). */
     private static final String STEP = "# ";
@@ -120,6 +119,7 @@ public final class ContentBuild {
     public static boolean mayReload() {
         synchronized (LOCK) {
             boolean first = !reloaded;
+            if (first && state().equals("ready")) WorldRuntime.initializeIfPresent();
             reloaded = true;
             return first;
         }
@@ -198,8 +198,13 @@ public final class ContentBuild {
             throw new IOException(builder + " is missing; reinstall Project Gielinor");
         }
         File java = new File(System.getProperty("java.home"), "bin/" + (File.separatorChar == '\\' ? "java.exe" : "java"));
-        List<String> command = List.of(java.getPath(), HEAP, "-jar", builder.toString(),
-            "--zomboid", ZomboidFileSystem.instance.base.canonicalFile.getPath(), "--out", out.toString());
+        Path recipe = recipeFolder();
+        if (!Files.isRegularFile(recipe.resolve("package.json")))
+            throw new IOException("The world recipe package is missing; reinstall Project Gielinor");
+        List<String> command = new ArrayList<>(List.of(java.getPath(), HEAP, "-jar", builder.toString(),
+            "--zomboid", ZomboidFileSystem.instance.base.canonicalFile.getPath(), "--out", out.toString(),
+            "--world-recipe", recipe.toString(), "--world-cache",
+            Path.of(ZomboidFileSystem.instance.getCacheDir(), "ProjectGielinorWorldBuild").toString()));
         return new ProcessBuilder(command).directory(work().toFile()).redirectErrorStream(true).start();
     }
 
@@ -312,16 +317,17 @@ public final class ContentBuild {
         return Path.of(mod.getVersionDir(), BUILDER);
     }
 
+    private static Path recipeFolder() {
+        ChooseGameInfo.Mod mod = ChooseGameInfo.getModDetails(MOD_ID);
+        return Path.of(mod.getVersionDir(), WORLD_RECIPE);
+    }
+
     /** The SHA-256 of the builder's jar, which names the builder in a pack's stamp. */
-    private static String builderHash() {
+    private static String builderHash() throws IOException {
         synchronized (LOCK) {
             if (builderHash == null) {
-                try {
-                    MessageDigest sha = MessageDigest.getInstance("SHA-256");
-                    builderHash = HexFormat.of().formatHex(sha.digest(Files.readAllBytes(builderJar())));
-                } catch (IOException | NoSuchAlgorithmException e) {
-                    return "unknown";
-                }
+                builderHash = ContentFingerprint.calculate(builderJar(), recipeFolder().resolve("package.json"),
+                    ZomboidFileSystem.instance.base.canonicalFile.toPath().resolve("projectzomboid.jar"));
             }
             return builderHash;
         }

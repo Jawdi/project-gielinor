@@ -1,3 +1,6 @@
 # Gradle's output and caches
 .gradle/
 builder/build/
+
+# Working notes and draft assets, not published
+docs/

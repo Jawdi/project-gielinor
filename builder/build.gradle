@@ -5,6 +5,11 @@ plugins {
 group = 'gielinor'
 version = '0.1.0'
 
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
@@ -35,10 +40,21 @@ sourceSets {
     // The mod's own Java, which ZombieBuddy loads into the game: it runs the
     // builder from the main menu (or on a server's first start).
     mod
+    modTest {
+        compileClasspath += sourceSets.mod.output
+        runtimeClasspath += sourceSets.mod.output
+    }
+}
+
+configurations {
+    modTestImplementation.extendsFrom testImplementation
+    modTestRuntimeOnly.extendsFrom testRuntimeOnly
 }
 
 dependencies {
     implementation 'net.runelite:cache:1.13.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    testImplementation 'junit:junit:4.13.2'
     if (zomboidHome != null) {
         modCompileOnly files("$zomboidHome/projectzomboid.jar")
     }
@@ -53,6 +69,17 @@ tasks.named('compileModJava') {
         }
     }
 }
+
+tasks.named('compileModTestJava') {
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) }
+}
+def modTest = tasks.register('modTest', Test) {
+    description = 'Tests the game-side content build helpers on the game Java version.'
+    testClassesDirs = sourceSets.modTest.output.classesDirs
+    classpath = sourceSets.modTest.runtimeClasspath
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+}
+tasks.named('check') { dependsOn modTest }
 
 application {
     mainClass = 'gielinor.builder.Main'
@@ -85,6 +112,16 @@ def modJar = tasks.register('modJar', Jar) {
     from sourceSets.mod.output
 }
 
+def worldRecipeFolder = file(findProperty('worldRecipe') ?: "$buildDir/world-recipe")
+def verifyWorldRecipe = tasks.register('verifyWorldRecipe', JavaExec) {
+    description = 'Refuses packaging unless the world passed a full player reconstruction with this builder.'
+    dependsOn builderJar
+    classpath = files(builderJar)
+    mainClass = 'gielinor.builder.WorldRecipeTool'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    args 'verify-package', worldRecipeFolder.absolutePath, builderJar.get().archiveFile.get().asFile.absolutePath
+}
+
 // The mod as players get it: its files, the mod's Java and the builder.
 def modFiles = copySpec {
     from('../mod/ProjectGielinor')
@@ -94,17 +131,22 @@ def modFiles = copySpec {
     into('42/media/builder') {
         from builderJar
     }
+    into('42/media/builder/world-recipe') {
+        from worldRecipeFolder
+    }
 }
 
 def zomboidUser = file("${System.getProperty('user.home')}/Zomboid")
 
 tasks.register('installMod', Sync) {
+    dependsOn verifyWorldRecipe
     description = 'Puts the mod in Zomboid\'s mods folder, to play it locally.'
     with modFiles
     into new File(zomboidUser, 'mods/ProjectGielinor')
 }
 
 tasks.register('workshop', Sync) {
+    dependsOn verifyWorldRecipe
     description = 'Lays the mod out as a Steam Workshop item, ready to upload from the game\'s Workshop screen.'
     from('../workshop')
     into('Contents/mods/ProjectGielinor') {

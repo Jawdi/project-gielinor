@@ -148,12 +148,32 @@ final class GielinorArt {
                 continue;
             }
             counts.merge(wall ? "hung things" : "drawn things", 1, Integer::sum);
+            String climbing = climb(t.def);
+            if (climbing != null) {
+                for (int dx = 0; dx < t.width * scale; dx++) {
+                    for (int dy = 0; dy < t.height * scale; dy++) {
+                        reserveLadderOpening(levels, t.level, x0 + dx, y0 + dy, climbing);
+                    }
+                }
+            }
             for (Placed p : drawing) {
                 int level = t.level + p.dz;
                 if (level < GielinorObjects.LEVELS) {
                     levels[level].add(x0 + p.dx, y0 + p.dy, p.tile);
                 }
             }
+        }
+    }
+
+    /** Reserve floor and ceiling openings before map surfaces are written. */
+    static void reserveLadderOpening(GielinorObjects.Placed[] levels, int level, int x, int y, String climb) {
+        if (climb.equals("up") || climb.equals("both")) {
+            levels[level].openCeiling(x, y);
+            if (level + 1 < levels.length) levels[level + 1].open(x, y);
+        }
+        if (climb.equals("down") || climb.equals("both")) {
+            levels[level].open(x, y);
+            if (level > 0) levels[level - 1].openCeiling(x, y);
         }
     }
 

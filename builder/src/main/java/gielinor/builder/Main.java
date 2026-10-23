@@ -47,18 +47,42 @@ public final class Main {
         File cache = null;
         File zomboid = null;
         File out = null;
+        Path worldStage = null;
+        Path worldStream = null;
+        Path worldRecipe = null;
+        Path worldCache = null;
+        int worldThreads = Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors()));
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--cache" -> cache = new File(args[++i]);
                 case "--zomboid" -> zomboid = new File(args[++i]);
                 case "--out" -> out = new File(args[++i]);
+                case "--world-stage" -> worldStage = Path.of(args[++i]);
+                case "--world-stream" -> worldStream = Path.of(args[++i]);
+                case "--world-recipe" -> worldRecipe = Path.of(args[++i]);
+                case "--world-cache" -> worldCache = Path.of(args[++i]);
+                case "--world-threads" -> worldThreads = Integer.parseInt(args[++i]);
                 default -> {
                     System.err.println("unknown option " + args[i]);
-                    System.err.println("usage: gielinor-content-builder [--cache DIR] [--zomboid DIR] [--out DIR]");
+                    System.err.println("usage: gielinor-content-builder [--cache DIR] [--zomboid DIR] [--out DIR] [--world-recipe DIR] [--world-cache DIR] [--world-threads N]");
                     System.exit(2);
                 }
             }
         }
+        if ((worldStage == null) != (worldStream == null))
+            throw new IllegalArgumentException("--world-stage and --world-stream must be supplied together");
+        if (worldStage != null && out == null)
+            throw new IllegalArgumentException("Imported-world builds require an explicit fresh --out folder");
+        if (worldStage != null && worldRecipe != null)
+            throw new IllegalArgumentException("Choose a world recipe or a developer stage, not both");
+        if (worldThreads < 1 || worldThreads > 64)
+            throw new IllegalArgumentException("--world-threads must be between 1 and 64");
+        if (worldStage == null && worldRecipe == null) {
+            Path program = Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            worldRecipe = program.resolveSibling("world-recipe");
+        }
+        if (worldRecipe != null && !Files.isRegularFile(worldRecipe.resolve("package.json")))
+            throw new IOException("The world recipe package is missing. Reinstall Project Gielinor or pass --world-recipe <folder>.");
         if (cache == null) {
             cache = Pinned.cache();
         }
@@ -72,6 +96,7 @@ public final class Main {
         if (out == null) {
             out = new File(Locations.modsFolder(), PACK_ID);
         }
+        if (worldCache == null) worldCache = Locations.modsFolder().toPath().getParent().resolve("ProjectGielinorWorldBuild");
         System.out.println("cache:   " + cache);
         System.out.println("zomboid: " + zomboid);
         System.out.println("output:  " + out);
@@ -90,13 +115,26 @@ public final class Main {
             NpcManager npcs = new NpcManager(store);
             npcs.load();
             writePack(out.toPath(), built, icons, itemModels, npcs, scripts, zomboid);
+        }
             // Zomboid finds a mod's maps in its common folder (and only looks in
             // the version folder if the common one has maps too).
-            step("The map: reading the game's world");
-            TileDefinitions tiles = TileDefinitions.read(zomboid.toPath());
-            GielinorMap.write(out.toPath().resolve("common/media"), tiles, new GielinorTerrain(store),
-                new GielinorObjects(store, Pinned.keys(), tiles));
-        }
+            if (worldStage != null) {
+                step("The map: verifying and merging the imported world");
+                ImportedWorldPack.install(worldStage, worldStream, out.toPath(), zomboid.toPath());
+            } else {
+                final var lastProgress = new java.util.concurrent.atomic.AtomicInteger();
+                Path builtWorld = WorldRecipe.build(worldRecipe, cache, zomboid.toPath(), worldCache, worldThreads,
+                    new WorldRecipe.Progress() {
+                        public void step(String text) { Main.step(text); }
+                        public void drawn(int done, int total) {
+                            int prior = lastProgress.get();
+                            if ((done == total || done - prior >= 1000) && lastProgress.compareAndSet(prior, done))
+                                Main.step("Drawing world art: " + done + " / " + total + " sprites");
+                        }
+                    });
+                step("Combining the world with items and characters");
+                ImportedWorldPack.installPlayerBuild(builtWorld, worldRecipe, out.toPath(), zomboid.toPath());
+            }
         step("Done");
     }
 

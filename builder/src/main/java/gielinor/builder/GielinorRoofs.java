@@ -55,6 +55,8 @@ final class GielinorRoofs {
     private final byte[] height;
     /** Whether the level above each square's roof has a floor there (no flat top over it then). */
     private final boolean[] floorAbove;
+    /** A solid ceiling at the wall tops below the decorative slopes (-1 for a traversal opening). */
+    private final byte[] ceiling;
 
     /** The roofs over a cell's squares (`size` a side from `cellX`, `cellY`) and around them. */
     GielinorRoofs(GielinorMap.GroundGrid ground, GielinorObjects.Placed[] levels, int cellX, int cellY, int size) {
@@ -65,10 +67,23 @@ final class GielinorRoofs {
         style = new byte[side * side];
         height = new byte[side * side];
         floorAbove = new boolean[side * side];
+        ceiling = new byte[side * side];
+        java.util.Arrays.fill(ceiling, (byte) -1);
         for (int i = 0; i < side * side; i++) {
             int[] r = roofOver(ground, levels, x0 + i % side, y0 + i / side);
+            if (r != null) {
+                int zx = x0 + i % side;
+                int zy = y0 + i / side;
+                int on = r[2];
+                if (!levels[on - 1].isCeilingOpen(zx, zy)
+                        && (on >= levels.length || !levels[on].isOpen(zx, zy))) {
+                    ceiling[i] = (byte) on;
+                }
+            }
             if (r != null && r[0] + 1 < GielinorObjects.LEVELS) {
-                floorAbove[i] = (ground.upper(r[0] + 1, x0 + i % side, y0 + i / side) & GielinorMap.GroundGrid.FLOOR) != 0;
+                int above = r[0] + 1;
+                floorAbove[i] = (ground.upper(above, x0 + i % side, y0 + i / side) & GielinorMap.GroundGrid.FLOOR) != 0
+                    || levels[above].isOpen(x0 + i % side, y0 + i / side);
             }
             level[i] = (byte) (r == null ? -1 : r[0]);
             style[i] = (byte) (r == null ? 0 : r[1]);
@@ -169,10 +184,16 @@ final class GielinorRoofs {
         }
         String sheet = SHEETS[style[i]];
         int base = GROUPS[style[i]];
+        if (ceiling[i] >= 0 && ceiling[i] < stack.size()) {
+            // Slopes do not cover their entire supporting square. A solid
+            // deck closes the room below, including beneath elevated eaves.
+            stack.get(ceiling[i]).add(0, sheet + "_" + (base + FLAT));
+        }
         int h = height[i];
         if (h >= TOP) {
             if (on + 1 < stack.size() && !floorAbove[i]) {
-                stack.get(on + 1).add(0, sheet + "_" + (base + FLAT));
+                String cap = sheet + "_" + (base + FLAT);
+                if (!stack.get(on + 1).contains(cap)) stack.get(on + 1).add(0, cap);
             }
             return;
         }
@@ -193,6 +214,12 @@ final class GielinorRoofs {
             piece = SLOPE_E - h;
         } else if (!lowN && !lowW && heightAt(x + 1, y + 1, on) < h) {
             piece = INNER + h;
+        } else if (!lowN && !lowW && heightAt(x + 1, y - 1, on) < h) {
+            // An inside corner opening north-east still exposes the east
+            // slope. Omitting it leaves a triangle missing on each step.
+            piece = SLOPE_E - h;
+        } else if (!lowN && !lowW && heightAt(x - 1, y + 1, on) < h) {
+            piece = SLOPE_S + h - 1;
         } else {
             // A north or west slope, or a valley facing away: Zomboid draws none.
             return;
@@ -227,19 +254,21 @@ final class GielinorRoofs {
             }
         }
         int[] roof = null;
-        for (int z = 1; z < MapCell.LEVELS && roof == null; z++) {
+        for (int z = 1; z <= GielinorObjects.LEVELS && roof == null; z++) {
             int style = ground.roofAt(z, zx, zy);
             if (style >= 0) {
                 // The game's roofs can rise from the level of a floor under
                 // them (an attic's); Zomboid's stand over the highest floor.
-                roof = new int[]{Math.max(z, Math.max(1, top + 1)), style};
+                roof = new int[]{Math.max(z, Math.max(1, top + 1)), style, Math.max(1, top + 1)};
             }
         }
         if (roof == null && top >= 0 && roofed) {
-            roof = new int[]{top + 1, stone ? SLATE : CLAY};
+            roof = new int[]{top + 1, stone ? SLATE : CLAY, top + 1};
         }
         // Never over a stairwell (the stairs come up through it).
-        if (roof != null && (roof[0] >= MapCell.LEVELS || roof[0] < GielinorObjects.LEVELS && levels[roof[0]].isOpen(zx, zy))) {
+        if (roof != null && (roof[0] >= MapCell.LEVELS || levels[roof[2] - 1].isCeilingOpen(zx, zy)
+                || roof[2] < levels.length && levels[roof[2]].isOpen(zx, zy)
+                || roof[0] < levels.length && levels[roof[0]].isOpen(zx, zy))) {
             return null;
         }
         return roof;

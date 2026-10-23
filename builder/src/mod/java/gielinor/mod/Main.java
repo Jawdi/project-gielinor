@@ -14,6 +14,7 @@ public final class Main {
 
     public static void main(String[] args) {
         if (!GameServer.server) {
+            if (ContentBuild.state().equals("ready")) WorldRuntime.initializeIfPresent();
             return;
         }
         if (!GameServer.ServerMods.contains(ContentBuild.PACK_ID)) {
@@ -21,6 +22,7 @@ public final class Main {
         }
         String state = ContentBuild.state();
         if (state.equals("ready")) {
+            WorldRuntime.initializeIfPresent();
             return;
         }
         log("the content pack is " + state + ", so it's being built now; this takes several minutes");
@@ -31,6 +33,7 @@ public final class Main {
         });
         if (built) {
             ContentBuild.forgetModFolders();
+            WorldRuntime.initializeIfPresent();
             log("content pack built");
         } else {
             log("the content pack wasn't built: " + ContentBuild.progress() + ". The builder's output is in " + ContentBuild.log());

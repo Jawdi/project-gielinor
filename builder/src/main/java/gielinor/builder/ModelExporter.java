@@ -220,6 +220,25 @@ final class ModelExporter {
     /** A face this see-through or more (the game's alpha, 0 to 255) is left out of a mesh. */
     private static final int SEE_THROUGH = 250;
 
+    /**
+     * Whether the game draws a face at all. Its models carry faces it never
+     * shows, mostly white: an untextured face of render type 2 or 3, or a
+     * textured one of type 2 (an alpha of 255 makes a face type 2, 254 type
+     * 3). Drawn, they show as white spikes on roofs and white panels on
+     * walls.
+     */
+    static boolean drawn(ModelDefinition model, int face) {
+        int type = model.faceRenderTypes == null ? 0 : model.faceRenderTypes[face] & 0xff;
+        int alpha = model.faceTransparencies == null ? 0 : model.faceTransparencies[face] & 0xff;
+        if (alpha == 255) {
+            type = 2;
+        } else if (alpha == 254) {
+            type = 3;
+        }
+        boolean textured = model.faceTextures != null && model.faceTextures[face] >= 0;
+        return textured ? type != 2 : type < 2;
+    }
+
     private Mesh rawMesh(ModelDefinition model, ItemDefinition item, int seeThroughFrom) {
         if (item != null) {
             if (item.colorFind != null) {
@@ -240,7 +259,7 @@ final class ModelExporter {
         mesh.groups.addAll(groups(model));
         for (int i = 0; i < model.faceCount; i++) {
             boolean seeThrough = model.faceTransparencies != null && (model.faceTransparencies[i] & 0xff) >= seeThroughFrom;
-            if (model.faceColors[i] == -2 || seeThrough) {
+            if (model.faceColors[i] == -2 || seeThrough || !drawn(model, i)) {
                 continue;
             }
             int texture = model.faceTextures == null ? -1 : model.faceTextures[i];

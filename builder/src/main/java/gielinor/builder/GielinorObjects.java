@@ -139,6 +139,8 @@ final class GielinorObjects {
             final boolean[] open = new boolean[BLOCK * BLOCK];
             /** Squares given a floor, where stairs from below come out. */
             final boolean[] landing = new boolean[BLOCK * BLOCK];
+            /** Openings through the ceiling above this level, including top-storey ladders. */
+            final boolean[] ceilingOpen = new boolean[BLOCK * BLOCK];
         }
 
         private Placed(int width, int height, List<String> tiles, Map<String, Integer> tileIndex) {
@@ -238,6 +240,15 @@ final class GielinorObjects {
         boolean isOpen(int x, int y) {
             Block b = inside(x, y) ? block(x, y, false) : null;
             return b != null && b.open[at(x, y)];
+        }
+
+        void openCeiling(int x, int y) {
+            if (inside(x, y)) block(x, y, true).ceilingOpen[at(x, y)] = true;
+        }
+
+        boolean isCeilingOpen(int x, int y) {
+            Block b = inside(x, y) ? block(x, y, false) : null;
+            return b != null && b.ceilingOpen[at(x, y)];
         }
 
         /** What stands on a square, or null. */

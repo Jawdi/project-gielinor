@@ -1,134 +1,92 @@
 # Project Gielinor
 
-A Project Zomboid mod that brings the world of Gielinor into Zomboid: its
-items, skills, creatures and eventually its map, played with Zomboid's own
-character, survival mechanics, UI and zombies.
+![Project Gielinor for Project Zomboid (early test build)](docs/assets/workshop-banner-stone-v3.gif)
 
-## How it's put together
+Project Gielinor brings the world of Old School RuneScape into Project Zomboid.
 
-The mod ships only its own code. None of Jagex's assets are included or
-distributed. Instead, the mod builds them on your machine: the first time
-you reach the main menu with it, it offers to build a local content pack
-(items, icons, models, zombies, the map and so on) into your Zomboid mods
-folder, then switches the pack on and reloads the mods.
+We're building a survival experience where you can explore familiar towns, gather resources, develop skills and equip RuneScape gear while facing Zomboid's hunger, injuries, weather and zombies.
 
-The build runs the Project Gielinor Content Builder, which ships inside the
-mod and runs with the game's own Java. The mod starts it through
-[ZombieBuddy](https://github.com/zed-0xff/ZombieBuddy), which lets mods
-carry Java, so the mod requires ZombieBuddy.
+**[Get the mod on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3821895054)**
 
-The builder always builds from the same version of the game, so every player
-and every multiplayer server gets the same items and world. It fetches that
-version (the game cache, about 190 MB, and the keys that unlock its map) once
-from the [OpenRS2 archive](https://archive.openrs2.org) and keeps it for later
-builds. A pack records which builder made it, and the mod offers to build it
-again after an update.
+---
 
-## Requirements
+![Early test build](docs/assets/workshop-headers/compact-set-v2/01-early-test-build.png)
 
-- Project Zomboid, Build 42.
-- ZombieBuddy, with its Java part installed as its Workshop page describes.
-- An internet connection the first time the builder runs.
+> **Early test build for Project Zomboid Build 42.**
+>
+> Expect bugs, unfinished features and visual glitches. Start a new world after each update. We haven't tested compatibility with other mods.
+>
+> The vision below describes where we're taking the project; some systems remain planned or incomplete.
 
-## Servers
+---
 
-Install ZombieBuddy's Java part on the server too, and list
-`Mods=ZombieBuddy;ProjectGielinorContent;ProjectGielinor` with
-`Map=Gielinor`. The server builds its own pack on its first start (and after
-an update), before it loads its mods. Players build theirs from the main menu
-before joining.
+![Our vision](docs/assets/workshop-headers/compact-set-v2/02-our-vision.png)
 
-## Building
+We want Gielinor to feel like a world you can live in, explore and struggle to survive.
 
-From `builder/`, with Gradle (the builder needs Java 21; the mod's Java,
-compiled against the game, needs Java 25):
+- **A familiar world.** Explore RuneScape's towns, wilderness and landmarks for shelter and supplies.
+- **RuneScape progression.** Gather resources, develop skills and craft equipment to help you survive.
+- **Equipment worth finding.** Discover RuneScape weapons, armour and tools with useful roles in survival.
+- **The inhabitants of Gielinor.** Encounter RuneScape creatures and wildlife with behaviours suited to the world.
+- **Zomboid survival.** Manage hunger, injuries, exhaustion and weather while keeping zombies at bay.
 
+---
+
+![Requirements](docs/assets/workshop-headers/compact-set-v2/03-requirements.png)
+
+- Project Zomboid Build 42.
+- [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853), including its Java component. Follow the installation instructions on its Workshop page.
+- An internet connection for the initial content build.
+
+---
+
+![Getting started](docs/assets/workshop-headers/compact-set-v2/04-getting-started.png)
+
+1. Subscribe to Project Gielinor on Steam Workshop and install ZombieBuddy's Java component.
+2. Enable Project Gielinor, which also enables ZombieBuddy. Allow Project Gielinor to run Java code when ZombieBuddy prompts you. You only need to approve this once.
+3. At the main menu, follow the prompt to build the content pack. The builder downloads about 190 MB of game files from the [OpenRS2 archive](https://archive.openrs2.org) and generates the content on your computer.
+4. Allow several minutes for the build. When it finishes, the mods reload with the content pack enabled.
+5. Start a new game and choose **Gielinor** at World Select, then choose a starting town.
+
+Initial content generation and world loading can take a while.
+
+The mod does not ship Jagex's game files. Keep downloaded files and generated content packs on your computer; please don't share or upload them.
+
+---
+
+![Servers](docs/assets/workshop-headers/compact-set-v2/05-servers.png)
+
+Install ZombieBuddy's Java component on the server and use:
+
+```ini
+Mods=ZombieBuddy;ProjectGielinorContent;ProjectGielinor
+Map=Gielinor
 ```
-gradle installMod
-```
 
-puts the mod, with its Java and the builder, in `Zomboid/mods/ProjectGielinor`,
-and `gradle workshop` lays it out in `Zomboid/Workshop/ProjectGielinor`
-(with `workshop/workshop.txt` and `preview.png`) for the game's Workshop
-upload screen. Gradle finds Project Zomboid in Steam's usual folders; pass
-`-Pzomboid=<install folder>` or set `ZOMBOID_HOME` otherwise.
+The server builds its content pack on the first start and after builder updates. Players must build their own pack from the main menu before joining.
 
-The builder also runs on its own:
+---
 
-```
-gradle run
-gradle run --args="--cache <cache folder> --zomboid <install folder> --out <pack folder>"
-```
+![Support the project](docs/assets/workshop-headers/compact-set-v2/06-support-the-project.png)
 
-It finds Project Zomboid on its own and writes the pack to
-`Zomboid/mods/ProjectGielinorContent`. Each build writes `item-report.txt`
-next to the pack, listing the items left out and why.
-`builder/src/main/resources/item-overrides.txt` keeps or drops items by name.
+If you'd like to see Project Gielinor grow, leave a thumbs up and add it to your favourites on [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3821895054). You can also star this repository to help others find the source.
 
-The builder reads the cache with RuneLite's open-source cache library; the
-licences of the libraries it bundles are in its jar's
-`META-INF/THIRD-PARTY-NOTICES.txt`.
+Share ideas, experiences and bug reports in the Workshop comments or [GitHub issues](https://github.com/Jawdi/project-gielinor/issues). For bugs, include the location, what happened, your Zomboid version and enabled mods. Screenshot or video links are welcome; include relevant logs when available.
 
-## What's in it so far
+---
 
-- Items: the game's items the mod has a use for, about 2,300: weapons, tools,
-  food, drink, clothing and armour, and the materials Zomboid's crafting or
-  the mod's skills use (ore, bars, logs, gems, herbs, seeds, hides, runes).
-  Quest and minigame items, burnt food, poisoned copies and kinds with no use
-  yet (ammunition, bows, shields, potions) are left out. Each item copies the
-  vanilla Zomboid item that plays the same part, so it works where that does:
-  axes chop trees (with tree damage scaled from their strength bonus), hammers
-  build, needles sew, buckets and jugs hold water, a jug of wine holds wine,
-  raw fish needs cooking. Weapons fight with damage scaled from their
-  strength bonus.
-- Loot: items turn up where Zomboid keeps its own of the same kind (axes with
-  tools, armour in wardrobes, ore with metal bars, food in kitchens), cheap
-  ones common and valuable ones rare, and zombies carry a few. Switches for
-  Gielinor's and Zomboid's items in loot are ready for sandbox options.
-- Models: everything keeps the game's own shape and flat colours. People
-  (your character, clothing, zombies, monsters) move on Zomboid's skeleton the
-  way the game animates them: each part of a model moves with one bone.
-- Clothing and armour: every wearable is Zomboid clothing. Armour protects
-  against bites and scratches by its defence bonuses (a rune platebody about
-  57 out of 100). Helmets hide hair as they do in the game.
-- Your character: character creation is the game's character designer. Pick
-  body type A or B, a style for each body part (hair, jaw, torso, arms, legs,
-  feet) and the hair, clothing, shoe and skin colours from the game's
-  palettes. Name, voice, profession and traits stay Zomboid's. As in Zomboid,
-  the body can't be taken off and the clothes can: the torso and arms you pick
-  are a top, the legs trousers, the feet shoes, all ordinary clothing you can
-  take off, drop, swap and loot, with a Gielinor body (in underwear)
-  underneath.
-- Zombies: every zombie is one of Gielinor's folk, zombified: a random look
-  from the character designer, in Gielinor clothes (now and then missing a
-  piece) that drop with the corpse.
-- Animals: Zomboid's cows, chickens, sheep, pigs, rabbits, rats, mice,
-  raccoons and deer take the look of their Gielinor counterparts.
-- Map: the world of Gielinor, chosen at World Select (or `Map=Gielinor` on a
-  server), starting in any of its towns: Lumbridge, Varrock, Falador, the
-  Ardougnes, Kourend's cities and some thirty more. The game's ground, its
-  buildings on every floor with their walls, doors, stairs and one pitched
-  roof each, windows along every building's outside walls, its fences (its
-  low stone walls as iron railings), trees, rocks and ore, and its furniture
-  as Zomboid's own: beds sleep, chairs seat, ranges cook,
-  and drawers, wardrobes, shelves, counters and crates hold loot. Rooms are
-  named by their furniture, so a kitchen's counters hold kitchen things and a
-  smithy's shelves hold metalwork, and rooms short of containers get some.
-  What Zomboid has nothing like is drawn from the game's own models as the
-  mod's own tiles: fountains and wells (endless water), statues, stalls,
-  signs, banners, carts, crops, climbable ladders, and torches, lanterns and
-  candles that light up without power. Rooms the game leaves dark get
-  lanterns.
-- New characters start with a bronze axe, pickaxe and sword, a tinderbox, a
-  lobster and a jug of wine.
+![Source code and development](docs/assets/workshop-headers/compact-set-v2/07-source-code.png)
 
-## Status
+This repository contains the [mod](mod/ProjectGielinor) and [content-builder](builder) source. Use the Workshop version to play.
 
-Early development. A test build is on the Steam Workshop as an unlisted item:
-https://steamcommunity.com/sharedfiles/filedetails/?id=3821895054
+The builder uses RuneLite's cache library to read a pinned OSRS cache. Downloaded game files and generated packs are not part of this repository. Third-party library notices ship in the builder jar's `META-INF/THIRD-PARTY-NOTICES.txt`.
 
-## Legal
+---
 
-Project Gielinor is a fan project. It isn't affiliated with or endorsed by
-Jagex or The Indie Stone. Old School RuneScape and RuneScape are trademarks
-of Jagex Ltd.; Project Zomboid is a trademark of The Indie Stone.
+![Permissions](docs/assets/workshop-headers/compact-set-v2/08-permissions.png)
+
+Do not reupload or redistribute this mod, including modified versions, without our permission. Do not copy or reuse our code in other projects without asking us first. This includes mod packs that bundle our files; you may include the Workshop link in collections.
+
+See [source code permissions](LICENSE.md) for the full terms. These permissions concern our code only; RuneScape content belongs to Jagex.
+
+*Project Gielinor is a fan project with no affiliation with or endorsement from Jagex or The Indie Stone. Old School RuneScape and RuneScape are trademarks of Jagex Ltd.; Project Zomboid is a trademark of The Indie Stone.*

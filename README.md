@@ -45,7 +45,7 @@ We want Gielinor to feel like a world you can live in, explore and struggle to s
 1. Subscribe to Project Gielinor on Steam Workshop and install ZombieBuddy's Java component.
 2. Enable Project Gielinor, which also enables ZombieBuddy. Allow Project Gielinor to run Java code when ZombieBuddy prompts you. You only need to approve this once.
 3. At the main menu, follow the prompt to build the content pack. The builder downloads about 190 MB of game files from the [OpenRS2 archive](https://archive.openrs2.org) and generates the content on your computer.
-4. Allow several minutes for the build. When it finishes, the mods reload with the content pack enabled.
+4. Allow about 20 minutes for the first build on a fast PC, longer on slower ones. The build window shows each step and the time left. RuneScape's art belongs to Jagex, so the mod can't include it; your computer draws the items and the whole map from the official game data instead. This only happens once, and again only when an update changes the map. When it finishes, the mods reload with the content pack enabled.
 5. Start a new game and choose **Gielinor** at World Select, then choose a starting town.
 
 Initial content generation and world loading can take a while.
@@ -79,7 +79,7 @@ Share ideas, experiences and bug reports in the Workshop comments or [GitHub iss
 
 This repository contains the [mod](mod/ProjectGielinor) and [content-builder](builder) source. Use the Workshop version to play.
 
-The builder uses RuneLite's cache library to read a pinned OSRS cache. Downloaded game files and generated packs are not part of this repository. Third-party library notices ship in the builder jar's `META-INF/THIRD-PARTY-NOTICES.txt`.
+The builder uses RuneLite's cache library to read a pinned OSRS cache. Downloaded game files and generated packs are not part of this repository. Third-party library notices ship in the builder jar's `META-INF/THIRD-PARTY-NOTICES.txt`; the notice for the terrain shape tables from [rs-map-viewer](https://github.com/dennisdev/rs-map-viewer) is in [`THIRD-PARTY-NOTICES-rs-map-viewer.txt`](mod/ProjectGielinor/42/media/builder/THIRD-PARTY-NOTICES-rs-map-viewer.txt).
 
 ---
 
